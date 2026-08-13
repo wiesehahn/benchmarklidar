@@ -37,7 +37,7 @@ lidar-benchmark/
 ├── report/                   # Quarto report rendering all saved results
 ├── docs/                     # deeper investigation write-ups
 └── data/
-    ├── pointclouds/          # sample ALS corpus (gitignored, ~13GB, regenerable)
+    ├── pointclouds/          # sample ALS corpus (gitignored, ~4.5GB, regenerable)
     └── benchmarks/{nodename}/*.RDS   # saved results — tracked in git
 ```
 
@@ -60,12 +60,19 @@ which is the right-grained reproducibility mechanism for this use case.
 
 ## Sample data
 
-`data/pointclouds/` holds the real ALS tiles used as benchmark input.
-Regenerate it with `data-prep/fetch_sample_data.R` (needs access to `L:`/`J:`
-network shares — see "known limitations" below). `_setup.R` automatically
-stages a local `tempdir()` copy of this corpus on every run via
-`stage_sample_data()`, so most benchmarks measure processing time, not
-network read latency (the drive-speed benchmark is the deliberate
+`data/pointclouds/` holds the real ALS tiles used as benchmark input: a
+fixed random sample of 100 tiles (seed 42, reproducible across machines)
+from Lower Saxony's 2016 statewide ALS campaign
+(`J:/lidar/als/ni/2016/landesbefliegung`, ~22,500 tiles total). Chosen
+over a single forest-region acquisition because its smaller per-tile size
+(~4.5GB total for 100 tiles vs. ~13GB for the previous 33-tile forest
+corpus) makes a 100-file sample practical — large enough to properly
+stress-test worker-queue scaling (see `docs/worker-scaling-findings.md`)
+while staying a manageable total download. Regenerate it with `data-prep/fetch_sample_data.R` (needs access
+to the `J:` network share — see "known limitations" below). `_setup.R`
+automatically stages a local `tempdir()` copy of this corpus on every run
+via `stage_sample_data()`, so most benchmarks measure processing time,
+not network read latency (the drive-speed benchmark is the deliberate
 exception).
 
 ## How to run a benchmark
@@ -113,7 +120,7 @@ infrastructure matters as much as tooling for terabyte-scale throughput.
 ## Known limitations
 
 - `data-prep/fetch_sample_data.R` and `benchmarks/drives_local-vs-network.R`
-  hardcode network share paths (`L:`, `J:`, `Y:`) specific to this
+  hardcode network share paths (`J:`, `Y:`) specific to this
   organization's setup — only reproducible from a machine with the same
   mappings.
 - Several benchmarks intentionally reduce a multi-file corpus down to one
