@@ -1,0 +1,16 @@
+# machine-local sample data (regenerable via data-prep/fetch_sample_data.R)
+data/pointclouds/
+data/*.laz
+
+# RStudio / R session state
+.Rproj.user/
+.Rhistory
+.RData
+
+# rendered report output (regenerate on demand)
+report/*.html
+report/*_files/
+report/*_cache/
+
+# OS cruft
+Thumbs.db
