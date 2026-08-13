@@ -1,0 +1,100 @@
+---
+title: "ALS Processing Benchmark Report"
+format:
+  html:
+    toc: true
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+---
+
+```{r setup}
+#| include: false
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+```{r load}
+source("R/report-helpers.R")
+
+results <- load_all_benchmarks()
+```
+
+This report is generated entirely from `data/benchmarks/**/*.RDS` — it
+discovers every machine folder and benchmark result present, so it never
+goes stale the way a hardcoded script would. Re-render after adding new
+results with `quarto render report/benchmark-report.qmd`.
+
+## System & package versions
+
+Every timing below is traceable to the machine and tool versions that
+produced it.
+
+```{r sysinfo-table}
+sysinfo_rows <- lapply(results$meta, function(b) {
+  si <- b$systeminfo
+  pv <- b$pkgversions
+  data.frame(
+    benchmark = b$benchmark,
+    nodename  = b$nodename,
+    cpu       = if (!is.null(si)) si$cpu else NA,
+    cores     = if (!is.null(si)) si$cores else NA,
+    ram_gb    = if (!is.null(si)) round(as.numeric(si$ram) / 1024^3, 1) else NA,
+    r_version = if (!is.null(pv)) pv$r else NA,
+    lasR      = if (!is.null(pv)) pv$packages$lasR else NA,
+    lidR      = if (!is.null(pv)) pv$packages$lidR else NA
+  )
+})
+
+knitr::kable(do.call(rbind, sysinfo_rows), row.names = FALSE)
+```
+
+## Named comparisons (tool/stage benchmarks)
+
+One table and chart per benchmark type, across every machine that has
+results for it.
+
+```{r named-results}
+#| results: asis
+if (!is.null(results$named)) {
+  for (b in unique(results$named$benchmark)) {
+    cat("###", b, "\n\n")
+    d <- results$named[results$named$benchmark == b, ]
+    print(knitr::kable(d[, c("nodename", "expression", "elapsed")], row.names = FALSE))
+    cat("\n\n")
+
+    p <- ggplot2::ggplot(d, ggplot2::aes(x = expression, y = elapsed, fill = nodename)) +
+      ggplot2::geom_col(position = "dodge") +
+      ggplot2::coord_flip() +
+      ggplot2::labs(x = NULL, y = "elapsed (s)", title = b) +
+      ggplot2::theme_minimal()
+    print(p)
+    cat("\n\n")
+  }
+} else {
+  cat("No named-comparison results found under data/benchmarks/.\n")
+}
+```
+
+## Parameter sweeps (e.g. worker-count scaling)
+
+```{r sweep-results}
+#| results: asis
+if (!is.null(results$sweep)) {
+  for (b in unique(results$sweep$benchmark)) {
+    cat("###", b, "\n\n")
+    d <- results$sweep[results$sweep$benchmark == b, ]
+    param <- setdiff(names(d), c("seconds", "nodename", "benchmark"))[1]
+
+    p <- ggplot2::ggplot(d, ggplot2::aes(x = .data[[param]], y = seconds, color = nodename)) +
+      ggplot2::geom_line() +
+      ggplot2::geom_point() +
+      ggplot2::labs(x = param, y = "seconds", title = b) +
+      ggplot2::theme_minimal()
+    print(p)
+    cat("\n\n")
+  }
+} else {
+  cat("No parameter-sweep results found under data/benchmarks/ yet (e.g. run benchmarks/workers_raw-to-processed.R).\n")
+}
+```

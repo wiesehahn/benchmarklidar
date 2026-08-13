@@ -1,0 +1,139 @@
+# Core benchmark harness: timing, caching, and reproducibility metadata
+# shared by every script under benchmarks/.
+
+get_systeminfo <- function() {
+  cpu <- benchmarkme::get_cpu()
+
+  list(
+    nodename = unname(Sys.info()["nodename"]),
+    os       = unname(Sys.info()["sysname"]),
+    ram      = benchmarkme::get_ram(),
+    cpu      = cpu$model_name,
+    cores    = cpu$no_of_cores
+  )
+}
+
+get_fileinfo <- function(file) {
+  list(
+    filename = fs::path_file(file),
+    size     = fs::file_size(file)
+  )
+}
+
+get_filesetinfo <- function(files) {
+  sizes <- file.info(files)$size
+  list(
+    n_files         = length(files),
+    total_size_bytes = sum(sizes, na.rm = TRUE),
+    size_range      = range(sizes, na.rm = TRUE)
+  )
+}
+
+# Version info for the tools actually under comparison. Recorded per-run
+# (not pinned via a lockfile) because the whole point of this repo is
+# comparing how these tools perform *as their versions change over time*.
+get_pkgversions <- function(pkgs = c("lidR", "lasR", "fs", "jsonlite")) {
+  pkg_versions <- lapply(pkgs, function(p) {
+    tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA_character_)
+  })
+  names(pkg_versions) <- pkgs
+
+  get_cli_version <- function(command, args) {
+    tryCatch({
+      out <- system2(command, args, stdout = TRUE, stderr = TRUE)
+      paste(out, collapse = " ")
+    }, error = function(e) NA_character_, warning = function(w) NA_character_)
+  }
+
+  list(
+    r        = as.character(getRversion()),
+    packages = pkg_versions,
+    pdal     = get_cli_version("pdal", "--version"),
+    lastools = get_cli_version("las2las64", "-version")
+  )
+}
+
+# Deterministically pick one representative file from a set, instead of an
+# arbitrary/undocumented index. Used wherever a benchmark needs a single
+# input file (e.g. to keep a multi-tool comparison apples-to-apples).
+pick_representative_file <- function(files, method = "median_size") {
+  method <- match.arg(method, "median_size")
+  sizes <- file.info(files)$size
+  files[[which.min(abs(sizes - stats::median(sizes, na.rm = TRUE)))]]
+}
+
+# Run a set of named, zero-arg benchmark expressions, cache the result to
+# data/benchmarks/{nodename}/{rds_file}, and record system/file/package
+# info alongside the timings. Re-running is a no-op unless overwrite=TRUE
+# or the cached file is deleted.
+run_bench <- function(rds_file, ..., fileinfo = NULL, overwrite = FALSE) {
+  systeminfo <- get_systeminfo()
+
+  rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))
+  rds_path <- fs::path(rds_folder, rds_file)
+  if (fs::file_exists(rds_path) && !overwrite) return(readRDS(rds_path))
+
+  exprs <- list(...)
+  nms   <- names(exprs)
+
+  timing <- matrix(NA_real_, nrow = length(exprs), ncol = 3)
+  colnames(timing) <- c("user", "system", "elapsed")
+
+  for (i in seq_along(exprs)) {
+    gc()
+    t <- system.time(exprs[[i]]())
+    timing[i, ] <- unname(t[c("user.self", "sys.self", "elapsed")])
+  }
+
+  res <- data.frame(
+    expression = nms,
+    timing,
+    stringsAsFactors = FALSE
+  )
+
+  attr(res, "systeminfo") <- systeminfo
+  attr(res, "pkgversions") <- get_pkgversions()
+  if (!is.null(fileinfo)) attr(res, "fileinfo") <- fileinfo
+
+  saveRDS(res, rds_path)
+  res
+}
+
+# Run a single function across a sweep of parameter values (one row per
+# value), for benchmarks shaped as "how does time scale with X" rather
+# than "compare these named alternatives". `fun(param_value, ...)` is
+# timed with Sys.time() and may return a named list of extra columns
+# (e.g. n_ok) to attach to that row.
+run_sweep <- function(rds_file, param_name, param_values, fun, ...,
+                       fileset = NULL, overwrite = FALSE) {
+  systeminfo <- get_systeminfo()
+
+  rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))
+  rds_path <- fs::path(rds_folder, rds_file)
+  if (fs::file_exists(rds_path) && !overwrite) return(readRDS(rds_path))
+
+  rows <- vector("list", length(param_values))
+  for (i in seq_along(param_values)) {
+    gc()
+    t0 <- Sys.time()
+    extra <- fun(param_values[[i]], ...)
+    t1 <- Sys.time()
+
+    row <- c(
+      list(seconds = as.numeric(difftime(t1, t0, units = "secs"))),
+      extra
+    )
+    row[[param_name]] <- param_values[[i]]
+    rows[[i]] <- as.data.frame(row, stringsAsFactors = FALSE)
+  }
+
+  res <- do.call(rbind, rows)
+  res <- res[, c(param_name, setdiff(names(res), param_name)), drop = FALSE]
+
+  attr(res, "systeminfo") <- systeminfo
+  attr(res, "pkgversions") <- get_pkgversions()
+  if (!is.null(fileset)) attr(res, "filesetinfo") <- get_filesetinfo(fileset)
+
+  saveRDS(res, rds_path)
+  res
+}

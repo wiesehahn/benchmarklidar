@@ -1,10 +1,18 @@
-
-# compare processing times lasR stages
+# Compare processing times of individual lasR pipeline stages, run against
+# an already-loaded, in-memory point cloud. lasR::read_cloud() requires
+# exactly one file (length(file) == 1), so — like tools_comparison.R —
+# this operates on a single representative file, not the full corpus.
 source("_setup.R")
+
+bench_file <- pick_representative_file(in_laz)
+
+# Fixed thread count so stage timings aren't confounded by lasR's default
+# parallelism — this benchmark isolates per-stage cost, not thread scaling.
+set_fixed_thread_baseline(cores = 4)
 
 # stages to test
 read <- function() {
-  lasR::read_cloud(in_laz)
+  lasR::read_cloud(bench_file)
 }
 
 writelas <- function() {
@@ -90,13 +98,13 @@ classify_with_ptd <- function() {
 # PRE-READ
 # ============
 
-# ensure that the files are already in cache to ensure fair
+# ensure that the file is already in cache to ensure fair
 # comparison of all pipelines
 pre_read = lasR::reader() + lasR:::nothing(stream = T)
-lasR::exec(pre_read, on = in_laz)
+lasR::exec(pre_read, on = bench_file)
 
 # Read point cloud in memory so other stages can be benchmarked separate
-las <- lasR::read_cloud(in_laz)
+las <- lasR::read_cloud(bench_file)
 
 # ============
 # BENCHMARK
@@ -104,7 +112,7 @@ las <- lasR::read_cloud(in_laz)
 
 benchmark <-
   run_bench(
-    rds_file = "lasrstages_bench.RDS",
+    rds_file = "lasr_stages.RDS",
     read     = read,
     writelas = writelas,
     writelaz = writelaz,
@@ -120,12 +128,12 @@ benchmark <-
     classify_with_ivf = classify_with_ivf,
     classify_with_sor = classify_with_sor,
     classify_with_ipf = classify_with_ipf,
-    classify_with_ptd = classify_with_ptd
+    classify_with_ptd = classify_with_ptd,
+    fileinfo = get_fileinfo(bench_file)
   )
 
 attr(benchmark, "systeminfo")
-attr(benchmark, "fileinfo")
+attr(benchmark, "pkgversions")
 benchmark
 
 # related tests at https://github.com/r-lidar/lasR/blob/main/inst/benchmark-multithread.R
-
