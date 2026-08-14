@@ -15,7 +15,9 @@ knitr::opts_knit$set(root.dir = normalizePath(".."))
 ```
 
 ```{r load}
+#| include: false
 source("R/report-helpers.R")
+library(gt)
 
 results <- load_all_benchmarks()
 ```
@@ -46,29 +48,49 @@ sysinfo_rows <- lapply(results$meta, function(b) {
   )
 })
 
-knitr::kable(do.call(rbind, sysinfo_rows), row.names = FALSE)
+gt(do.call(rbind, sysinfo_rows)) |>
+  cols_label(
+    benchmark = "benchmark", nodename = "machine", cpu = "CPU",
+    cores = "cores", ram_gb = "RAM (GB)", r_version = "R",
+    lasR = "lasR", lidR = "lidR"
+  ) |>
+  fmt_number(columns = ram_gb, decimals = 1) |>
+  opt_row_striping() |>
+  tab_options(table.font.size = "13px", data_row.padding = px(4))
 ```
 
 ## Named comparisons (tool/stage benchmarks)
 
-One table and chart per benchmark type, across every machine that has
-results for it.
+One minimal table per benchmark type, across every machine that has
+results for it. Relative time is scaled against the fastest result in
+each table (1.00 = fastest).
 
 ```{r named-results}
 #| results: asis
 if (!is.null(results$named)) {
   for (b in unique(results$named$benchmark)) {
     cat("###", b, "\n\n")
-    d <- results$named[results$named$benchmark == b, ]
-    print(knitr::kable(d[, c("nodename", "expression", "elapsed")], row.names = FALSE))
-    cat("\n\n")
+    d <- results$named[results$named$benchmark == b, c("nodename", "expression", "elapsed")]
+    d <- add_relative_time(d, "elapsed")
 
-    p <- ggplot2::ggplot(d, ggplot2::aes(x = expression, y = elapsed, fill = nodename)) +
-      ggplot2::geom_col(position = "dodge") +
-      ggplot2::coord_flip() +
-      ggplot2::labs(x = NULL, y = "elapsed (s)", title = b) +
-      ggplot2::theme_minimal()
-    print(p)
+    tbl <- gt(d) |>
+      cols_label(
+        nodename = "machine", expression = "method",
+        elapsed = "time (s)", relative = "relative"
+      ) |>
+      fmt_number(columns = elapsed, decimals = 2) |>
+      fmt_number(columns = relative, decimals = 2, pattern = "{x}x") |>
+      sub_missing(columns = c(elapsed, relative), missing_text = "not available") |>
+      data_color(
+        columns = relative,
+        method = "numeric",
+        palette = c("#e8f4ea", "#f9e6c8"),
+        domain = c(1, max(d$relative, na.rm = TRUE))
+      ) |>
+      opt_row_striping() |>
+      tab_options(table.font.size = "13px", data_row.padding = px(4))
+
+    print(tbl)
     cat("\n\n")
   }
 } else {
@@ -78,6 +100,9 @@ if (!is.null(results$named)) {
 
 ## Parameter sweeps (e.g. worker-count scaling)
 
+Relative time is scaled against the fastest parameter value in each
+table (1.00 = fastest).
+
 ```{r sweep-results}
 #| results: asis
 if (!is.null(results$sweep)) {
@@ -85,13 +110,27 @@ if (!is.null(results$sweep)) {
     cat("###", b, "\n\n")
     d <- results$sweep[results$sweep$benchmark == b, ]
     param <- setdiff(names(d), c("seconds", "nodename", "benchmark"))[1]
+    d <- d[, c("nodename", param, "seconds")]
+    d <- d[order(d[[param]]), ]
+    d <- add_relative_time(d, "seconds", reorder = FALSE)
 
-    p <- ggplot2::ggplot(d, ggplot2::aes(x = .data[[param]], y = seconds, color = nodename)) +
-      ggplot2::geom_line() +
-      ggplot2::geom_point() +
-      ggplot2::labs(x = param, y = "seconds", title = b) +
-      ggplot2::theme_minimal()
-    print(p)
+    tbl <- gt(d) |>
+      cols_label(
+        nodename = "machine", seconds = "time (s)", relative = "relative"
+      ) |>
+      fmt_number(columns = seconds, decimals = 2) |>
+      fmt_number(columns = relative, decimals = 2, pattern = "{x}x") |>
+      sub_missing(columns = c(seconds, relative), missing_text = "not available") |>
+      data_color(
+        columns = relative,
+        method = "numeric",
+        palette = c("#e8f4ea", "#f9e6c8"),
+        domain = c(1, max(d$relative, na.rm = TRUE))
+      ) |>
+      opt_row_striping() |>
+      tab_options(table.font.size = "13px", data_row.padding = px(4))
+
+    print(tbl)
     cat("\n\n")
   }
 } else {

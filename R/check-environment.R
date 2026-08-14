@@ -3,7 +3,7 @@
 # by _setup.R, or call directly any time to re-check.
 check_environment <- function(
     pkgs = c("lidR", "lasR", "fs", "jsonlite", "benchmarkme",
-             "future", "future.apply", "mirai", "ggplot2", "knitr"),
+             "future", "future.apply", "mirai", "gt", "knitr"),
     optional_pkgs = c(managelidar = "needed for benchmarks/workers_raw-to-processed.R"),
     tools = list(
       pdal     = c("pdal", "--version"),

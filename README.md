@@ -44,7 +44,7 @@ lidar-benchmark/
 ## Requirements / setup
 
 R packages: `lidR`, `lasR`, `fs`, `jsonlite`, `benchmarkme`, `future`,
-`future.apply`, `mirai`, `ggplot2` (for the report); `managelidar` only for
+`future.apply`, `mirai`, `gt` (for the report); `managelidar` only for
 the worker-scaling benchmark
 (`remotes::install_github("nwfva-b4/managelidar")` or a local
 `devtools::install()`). External tools: PDAL (via conda) and LAStools —
