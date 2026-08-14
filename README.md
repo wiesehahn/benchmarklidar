@@ -151,6 +151,20 @@ infrastructure matters as much as tooling for terabyte-scale throughput.
   deterministically-chosen representative file (`pick_representative_file()`)
   so multi-tool comparisons stay apples-to-apples — see the comment at each
   call site for why.
+- **Sample data must be spatially indexed** (`data-prep/fetch_sample_data.R`
+  runs `lasR::write_lax()` after fetching). Without a `.lax` index, lasR
+  treats a file collection as unindexed and auto-inserts its own
+  `write_lax()` at the start of every pipeline — which, per lasR's own
+  docs, "cannot be run in parallel". This silently penalizes any benchmark
+  that hands a full multi-file collection to a single `lasR::exec()` call
+  (only `benchmarks/parallel_strategies.R`'s `lasr_internal` does this) far
+  more than strategies that process one file per worker process. Confirmed
+  by testing: on the same 100-file corpus, `lasr_internal` went from
+  1280.3s (unindexed) to 272.8s (indexed) — a ~4.7x difference that had
+  nothing to do with the strategy itself. Also note: `write_lax()`'s
+  default `overwrite = FALSE` ("skip if already indexed") false-positives
+  on this corpus even with zero `.lax` files present — `overwrite = TRUE`
+  is required to actually build the index.
 
 ## Reproducibility notes
 
