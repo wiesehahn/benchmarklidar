@@ -70,37 +70,48 @@ additional file-worker. A tentative `ncores = concurrent_points(2)` default
 was implemented, benchmarked, and then reverted. **Do not re-attempt an
 internal-threading default without new contradicting evidence.**
 
-## Not settled: is "half of cores" too conservative?
+## First full-queue sweep result: "half of cores" confirmed conservative (on the 12-core dev machine)
 
-The one clean signal so far — `workers=12` (all cores) beat `workers=6`
-(half) by ~3.5% with no sign of I/O contention at 12-way concurrent file
-reads — is suggestive but not conclusive: the 8-file test set meant
-`workers=12` gave *every file its own worker simultaneously* (no queue
-pressure). That doesn't yet test a real queue under sustained load
-(hundreds/thousands of files, workers constantly cycling), where I/O
-contention (especially reading from shared/network storage) or memory
-pressure could behave differently than a burst of 8 simultaneous reads.
+`benchmarks/workers_raw-to-processed.R` run for real on PC069 (12 logical
+cores, 32GB RAM) against the full 100-tile sample corpus (~4.5GB, a
+reproducible random sample from Lower Saxony's 2016 statewide ALS
+campaign — see `data-prep/fetch_sample_data.R`), sweeping `workers` from
+half the logical core count up to 2x:
 
-`benchmarks/workers_raw-to-processed.R` sweeps `workers` from half the
-logical core count up to ~2x, using a file set large enough (2-3x the
-highest worker count tested) to keep the queue non-empty throughout, and
-looks for where the timing curve plateaus or regresses. A plateau/
-regression well below the logical core count would indicate I/O or memory
-is the real bottleneck, not CPU — pushing `workers` further wouldn't help
-and might hurt. If it keeps scaling cleanly up to core count (or beyond),
-the current "half of cores" default is leaving real throughput on the
-table.
+| workers | seconds | vs. workers=6 |
+|---|---|---|
+| 6 (today's literal default: half of cores) | 2972.5 | baseline |
+| 9 (0.75x cores) | 2701.7 | -9.1% |
+| 12 (1x cores) | 2654.4 | -10.7% |
+| **18 (1.5x cores)** | **2600.7** | **-12.5% — fastest** |
+| 24 (2x cores) | 2653.4 | -10.7% |
 
-**Target machines:**
-- Dev machine used for the tests above: 12 logical cores, ~32GB RAM.
-- Production target: AMD Ryzen Threadripper PRO 5975WX, 32 cores / 64
-  threads (SMT), 256GB RAM. Given the much larger core count and RAM
-  headroom, the "half of cores" default is almost certainly conservative
-  there *if* I/O keeps up — that's exactly the open question.
+All 5 configs processed 100/100 files successfully — no failures at any
+worker count. **This settles the question for this machine:** `workers=6`
+(the current default heuristic) is measurably conservative — `workers=18`
+(1.5x logical cores) is ~12.5% faster, with no sign of memory exhaustion
+or I/O contention at any tested worker count. Returns diminish and
+slightly reverse past 18 workers (24 is marginally slower than 18),
+suggesting the plateau on *this* machine sits somewhere around 1.5-2x
+logical cores, not at 1x or 0.5x.
 
-**Test data:** real ALS tiles, 1km x 1km, varying point density/attributes,
-file sizes from ~4MB up to 2GB+ (rare multi-GB outliers should be excluded
-from routine runs — slow and rare in the real corpus).
+**Still open:** this was tested only on the 12-core/32GB dev machine. The
+production target — AMD Ryzen Threadripper PRO 5975WX, 32 cores / 64
+threads (SMT), 256GB RAM — has a much larger core count and RAM headroom,
+so it's not yet known whether the same ~1.5x-cores sweet spot holds there,
+or whether I/O (especially reading from shared/network storage) or memory
+pressure becomes the bottleneck earlier at that much higher concurrency.
+Given the dev-machine result, raising the package's default heuristic
+above "half of cores" looks justified in principle — but that's a
+separate decision from this benchmarking pass, since it affects *all*
+users of the package. Confirming the pattern holds on the Threadripper
+(or finding where it breaks down there) should come before changing the
+shipped default; a targeted `workers=` override is the safe interim
+choice for production runs on that machine.
+
+**Test data:** 100 real ALS tiles (~4.5GB total, ~20-90MB each) from
+Lower Saxony's 2016 statewide campaign, fixed random sample (seed 42) via
+`data-prep/fetch_sample_data.R`.
 
 ## Gotchas hit while benchmarking
 
@@ -126,15 +137,17 @@ from routine runs — slow and rare in the real corpus).
 ## Suggested next step
 
 1. Confirm R + `managelidar` (with all deps: `lasR`, `gdalraster`, etc.) is
-   installed on the target machine.
-2. Gather a representative file set reachable from that machine — bigger
-   than the 8 files used so far (100+ files if testing up to 32-48
-   workers, to stress-test a queue past the highest worker count tried).
-3. Run `benchmarks/workers_raw-to-processed.R` (edit `files` to point at
-   that set), watching memory usage alongside wall-clock time.
-4. Look for the plateau/regression point in the timing curve. If none
-   shows up to the full logical core count (64 on the Threadripper),
-   consider raising the package's default heuristic — but that's a
+   installed on PC026 (the Threadripper).
+2. Run `benchmarks/workers_raw-to-processed.R` there against the same
+   100-tile sample corpus (`data-prep/fetch_sample_data.R`), watching
+   memory usage alongside wall-clock time. Consider widening
+   `worker_counts` beyond the default half/0.75x/1x/1.5x/2x-cores range —
+   at 64 logical cores, 2x is 128 workers, which may need a larger file
+   set than 100 to keep the queue non-empty throughout (see the dev-machine
+   sizing rationale in `data-prep/fetch_sample_data.R`).
+3. Look for the plateau/regression point in the timing curve. If it sits
+   meaningfully above 0.5x cores (as it did on the dev machine, at ~1.5x),
+   raising the package's default heuristic looks justified — but that's a
    separate decision from this benchmarking pass, since it affects *all*
    users of the package, not just this high-core-count production use
    case; a targeted `workers=` override for this specific production run
