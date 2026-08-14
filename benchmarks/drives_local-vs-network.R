@@ -1,10 +1,12 @@
 # Benchmark local vs. network drive read/write speed. The repo itself
 # lives on a network share (Y:), so data/pointclouds/ IS the network-drive
 # source; in_laz (from _setup.R's stage_sample_data()) is the same corpus
-# copied to a local tempdir. Re-run with overwrite = TRUE whenever network
-# infrastructure changes (see data/benchmarks/pc069/drives_local-vs-network_alte-leitung.RDS
-# for a real before/after example: ~2x slower reads over an old network
-# cable/line ("alte Leitung")).
+# copied to a local tempdir. Cached like every other benchmark — pass
+# overwrite = TRUE (to run_all_benchmarks() or directly here) to force a
+# fresh measurement, e.g. after a known network infrastructure change (see
+# data/benchmarks/pc069/drives_local-vs-network_alte-leitung.RDS for a real
+# before/after example: ~2x slower reads over an old network cable/line
+# ("alte Leitung")).
 source("_setup.R")
 
 # Network path is hardcoded to this repo's own share location — only
@@ -65,8 +67,7 @@ run_bench(
   read_network   = read_network,
   write_local    = write_local,
   write_network  = write_network,
-  fileinfo       = get_fileinfo(in_local),
-  overwrite      = TRUE
+  fileinfo       = get_fileinfo(in_local)
 )
 
 fs::file_delete(fs::dir_ls(out_local_dir, type = "file"))

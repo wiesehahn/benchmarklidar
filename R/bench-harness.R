@@ -65,13 +65,20 @@ pick_representative_file <- function(files, method = "median_size") {
 # Run a set of named, zero-arg benchmark expressions, cache the result to
 # data/benchmarks/{nodename}/{rds_file}, and record system/file/package
 # info alongside the timings. Re-running is a no-op unless overwrite=TRUE
-# or the cached file is deleted.
-run_bench <- function(rds_file, ..., fileinfo = NULL, overwrite = FALSE) {
+# or the cached file is deleted. Default overwrite reads the
+# "lidarbench.overwrite" option, so run_all_benchmarks() (R/run-all.R) can
+# force a fresh run of everything without every script needing its own
+# overwrite= argument.
+run_bench <- function(rds_file, ..., fileinfo = NULL,
+                       overwrite = getOption("lidarbench.overwrite", FALSE)) {
   systeminfo <- get_systeminfo()
 
   rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))
   rds_path <- fs::path(rds_folder, rds_file)
-  if (fs::file_exists(rds_path) && !overwrite) return(readRDS(rds_path))
+  if (fs::file_exists(rds_path) && !overwrite) {
+    message("  [cached] ", rds_file)
+    return(readRDS(rds_path))
+  }
 
   exprs <- list(...)
   nms   <- names(exprs)
@@ -96,6 +103,7 @@ run_bench <- function(rds_file, ..., fileinfo = NULL, overwrite = FALSE) {
   if (!is.null(fileinfo)) attr(res, "fileinfo") <- fileinfo
 
   saveRDS(res, rds_path)
+  message("  [ran]    ", rds_file)
   res
 }
 
@@ -103,14 +111,19 @@ run_bench <- function(rds_file, ..., fileinfo = NULL, overwrite = FALSE) {
 # value), for benchmarks shaped as "how does time scale with X" rather
 # than "compare these named alternatives". `fun(param_value, ...)` is
 # timed with Sys.time() and may return a named list of extra columns
-# (e.g. n_ok) to attach to that row.
+# (e.g. n_ok) to attach to that row. Default overwrite reads the same
+# "lidarbench.overwrite" option as run_bench() — see there.
 run_sweep <- function(rds_file, param_name, param_values, fun, ...,
-                       fileset = NULL, overwrite = FALSE) {
+                       fileset = NULL,
+                       overwrite = getOption("lidarbench.overwrite", FALSE)) {
   systeminfo <- get_systeminfo()
 
   rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))
   rds_path <- fs::path(rds_folder, rds_file)
-  if (fs::file_exists(rds_path) && !overwrite) return(readRDS(rds_path))
+  if (fs::file_exists(rds_path) && !overwrite) {
+    message("  [cached] ", rds_file)
+    return(readRDS(rds_path))
+  }
 
   rows <- vector("list", length(param_values))
   for (i in seq_along(param_values)) {
@@ -135,5 +148,6 @@ run_sweep <- function(rds_file, param_name, param_values, fun, ...,
   if (!is.null(fileset)) attr(res, "filesetinfo") <- get_filesetinfo(fileset)
 
   saveRDS(res, rds_path)
+  message("  [ran]    ", rds_file)
   res
 }

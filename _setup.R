@@ -9,6 +9,7 @@ source("R/external-tools.R")
 source("R/stage-sample-data.R")
 source("R/lasr-options.R")
 source("R/report-helpers.R")
+source("R/run-all.R")
 
 in_laz <- stage_sample_data()
 configure_lidar_tools()

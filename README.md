@@ -77,14 +77,30 @@ exception).
 
 ## How to run a benchmark
 
+Run everything on this machine with a single call:
+
+```r
+source("_setup.R")
+run_all_benchmarks()                # skips any sub-benchmark whose result
+                                     # already exists for this machine
+run_all_benchmarks(overwrite = TRUE) # force a fresh run of everything
+```
+
+Or run one script at a time:
+
 ```r
 source("_setup.R")
 source("benchmarks/tools_comparison.R")  # or any other benchmarks/*.R script
 ```
 
-Results auto-save to `data/benchmarks/{nodename}/*.RDS`. Re-running a
-script is a no-op unless you pass `overwrite = TRUE` to `run_bench()`/
-`run_sweep()` or delete the cached RDS file.
+Results auto-save to `data/benchmarks/{nodename}/*.RDS`. Re-running is a
+no-op for any sub-benchmark whose RDS already exists, unless `overwrite =
+TRUE` (passed to `run_all_benchmarks()`, or directly to an individual
+`run_bench()`/`run_sweep()` call) or the cached file is deleted. Worth
+doing periodically for `benchmarks/drives_local-vs-network.R` in
+particular, since network/drive speed drifts over time independently of
+everything else (see the `alte-leitung` result in the machine table
+below).
 
 ## How to view results
 
