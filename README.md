@@ -93,6 +93,14 @@ source("_setup.R")
 source("benchmarks/tools_comparison.R")  # or any other benchmarks/*.R script
 ```
 
+`source("_setup.R")` prints a one-time preflight check (`R/check-environment.R`)
+confirming every required R package and external tool (PDAL, LAStools) is
+actually available, plus what's being staged/configured — useful for
+spotting a missing dependency before a multi-hour run rather than partway
+through it. Every benchmark then reports progress as it goes: which
+sub-benchmark is running, `[cached]` vs. `[running]`/`[ran]`, and
+per-expression timing as each one finishes.
+
 Results auto-save to `data/benchmarks/{nodename}/*.RDS`. Re-running is a
 no-op for any sub-benchmark whose RDS already exists, unless `overwrite =
 TRUE` (passed to `run_all_benchmarks()`, or directly to an individual

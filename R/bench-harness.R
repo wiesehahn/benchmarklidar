@@ -86,9 +86,12 @@ run_bench <- function(rds_file, ..., fileinfo = NULL,
   timing <- matrix(NA_real_, nrow = length(exprs), ncol = 3)
   colnames(timing) <- c("user", "system", "elapsed")
 
+  message(sprintf("  [running] %s (%d expressions)", rds_file, length(exprs)))
   for (i in seq_along(exprs)) {
     gc()
+    message(sprintf("    %d/%d %s ...", i, length(exprs), nms[i]))
     t <- system.time(exprs[[i]]())
+    message(sprintf("      done in %.1fs", t[["elapsed"]]))
     timing[i, ] <- unname(t[c("user.self", "sys.self", "elapsed")])
   }
 
@@ -125,15 +128,19 @@ run_sweep <- function(rds_file, param_name, param_values, fun, ...,
     return(readRDS(rds_path))
   }
 
+  message(sprintf("  [running] %s (%d %s values)", rds_file, length(param_values), param_name))
   rows <- vector("list", length(param_values))
   for (i in seq_along(param_values)) {
     gc()
+    message(sprintf("    %d/%d %s = %s ...", i, length(param_values), param_name, param_values[[i]]))
     t0 <- Sys.time()
     extra <- fun(param_values[[i]], ...)
     t1 <- Sys.time()
+    secs <- as.numeric(difftime(t1, t0, units = "secs"))
+    message(sprintf("      done in %.1fs", secs))
 
     row <- c(
-      list(seconds = as.numeric(difftime(t1, t0, units = "secs"))),
+      list(seconds = secs),
       extra
     )
     row[[param_name]] <- param_values[[i]]

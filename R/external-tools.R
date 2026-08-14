@@ -9,8 +9,10 @@ configure_lidar_tools <- function(
   paths <- strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]]
 
   add_path <- function(p) {
-    if (!is.null(p) && !p %in% paths)
+    if (!is.null(p) && !p %in% paths) {
       paths <<- c(p, paths)
+      message("  added to PATH: ", p)
+    }
   }
 
   add_path(file.path(conda_path, "Scripts"))
