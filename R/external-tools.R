@@ -1,9 +1,7 @@
-# configuration to make PDAL and LAStools work
-# add to path
-
-
+# Puts PDAL and LAStools on PATH for this R session. Defaults are this
+# repo's dev setup — override both args for your own machine (see README).
 configure_lidar_tools <- function(
-    conda_path = "C:/Users/jwiesehahn/AppData/Local/miniconda3",
+    conda_path = "C:/miniconda3",
     lastools_path = "C:/LAStools/bin"
 ) {
   paths <- strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]]
@@ -22,14 +20,3 @@ configure_lidar_tools <- function(
   Sys.setenv(PATH = paste(paths, collapse = .Platform$path.sep))
   invisible(TRUE)
 }
-
-
-# make pdal and lastools work
-# install miniconda
-# install pdal (run `conda install -c conda-forge pdal` from anaconda prompt)
-# install lastools
-# configure_lidar_tools()
-#
-# Test if it works
-# system("pdal --version")
-# system("las2las64.exe -version")

@@ -7,15 +7,15 @@
 # its RDS is already there, and only missing/new ones actually run.
 # overwrite = TRUE forces every sub-benchmark to re-run regardless — worth
 # doing periodically for benchmarks/drives_local-vs-network.R in
-# particular, since network/drive speed can drift over time (see
-# data/benchmarks/*/drives_local-vs-network_alte-leitung.RDS for a real
-# example: ~2x slower reads over an old network cable/line).
+# particular, since network/drive speed can drift over time (see PC166's
+# numbers vs. the other machines in the machine table in README.md for a
+# real example of a genuinely slower connection).
 run_all_benchmarks <- function(overwrite = FALSE) {
   source("_setup.R")
 
-  old_opt <- getOption("lidarbench.overwrite")
-  options(lidarbench.overwrite = overwrite)
-  on.exit(options(lidarbench.overwrite = old_opt))
+  old_opt <- getOption("benchmarklidar.overwrite")
+  options(benchmarklidar.overwrite = overwrite)
+  on.exit(options(benchmarklidar.overwrite = old_opt))
 
   scripts <- c(
     "benchmarks/tools_comparison.R",

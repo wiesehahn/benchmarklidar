@@ -110,30 +110,25 @@ las <- lasR::read_cloud(bench_file)
 # BENCHMARK
 # ============
 
-benchmark <-
-  run_bench(
-    rds_file = "lasr_stages.RDS",
-    read     = read,
-    writelas = writelas,
-    writelaz = writelaz,
-    writecopc = writecopc,
-    sort_points = sort_points,
-    triangulate = triangulate,
-    rasterize = rasterize,
-    dtm = dtm,
-    dsm = dsm,
-    normalize = normalize,
-    local_maximum = local_maximum,
-    classify_with_csf = classify_with_csf,
-    classify_with_ivf = classify_with_ivf,
-    classify_with_sor = classify_with_sor,
-    classify_with_ipf = classify_with_ipf,
-    classify_with_ptd = classify_with_ptd,
-    fileinfo = get_fileinfo(bench_file)
-  )
-
-attr(benchmark, "systeminfo")
-attr(benchmark, "pkgversions")
-benchmark
+run_bench(
+  rds_file = "lasr_stages.RDS",
+  read     = read,
+  writelas = writelas,
+  writelaz = writelaz,
+  writecopc = writecopc,
+  sort_points = sort_points,
+  triangulate = triangulate,
+  rasterize = rasterize,
+  dtm = dtm,
+  dsm = dsm,
+  normalize = normalize,
+  local_maximum = local_maximum,
+  classify_with_csf = classify_with_csf,
+  classify_with_ivf = classify_with_ivf,
+  classify_with_sor = classify_with_sor,
+  classify_with_ipf = classify_with_ipf,
+  classify_with_ptd = classify_with_ptd,
+  fileinfo = get_fileinfo(bench_file)
+)
 
 # related tests at https://github.com/r-lidar/lasR/blob/main/inst/benchmark-multithread.R

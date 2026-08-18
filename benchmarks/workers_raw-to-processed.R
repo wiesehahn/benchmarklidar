@@ -3,8 +3,9 @@
 # toward the terabyte-scale processing time question this repo exists to
 # answer. See docs/worker-scaling-findings.md for the investigation so far
 # (settled: internal lasR threading is NOT worth it vs. more concurrent
-# file workers; open: whether "half of cores" is too conservative on
-# high-core-count machines).
+# file workers; half of cores is confirmed conservative on most machines;
+# open: why the production machine (PC026) fails to complete most files
+# above 50% of cores).
 #
 # Does NOT call set_fixed_thread_baseline() — worker count is the variable
 # under test, and raw_to_processed() already hardcodes ncores=1 internally
@@ -21,29 +22,33 @@ library(managelidar)
 # ---------------------------------------------------------------------------
 # Enough files to keep every worker busy at the highest tested worker count
 # (ideally 2-3x that many, so the queue doesn't run dry before the run
-# ends). Defaults to the full staged sample corpus; override with a larger/
-# more representative set for a real sweep (see docs/worker-scaling-findings.md
-# "Suggested next step").
+# ends). Defaults to the full staged sample corpus.
 files <- in_laz
 
 if (length(files) == 0) {
   stop("No files staged. Check data/pointclouds/ and _setup.R::stage_sample_data().")
 }
 
-cat(sprintf("Benchmark set: %d files, %.2f GB total\n\n",
-            length(files), sum(file.info(files)$size, na.rm = TRUE) / 1024^3))
+message(sprintf("Benchmark set: %d files, %.2f GB total\n",
+                 length(files), sum(file.info(files)$size, na.rm = TRUE) / 1024^3))
 
 # ---------------------------------------------------------------------------
 # 2. Worker counts to sweep.
 # ---------------------------------------------------------------------------
-# Includes the current default heuristic's value (half of logical cores)
-# as a baseline, then spans up to and beyond the full logical core count to
-# see where returns flatten or reverse.
+# 50/75/100% of logical cores. Until 2026-08-17, managelidar's map_las()
+# silently clamped any requested `workers` to half of logical cores no
+# matter what was asked for, which made every value above that a no-op —
+# see docs/worker-scaling-findings.md and the fix upstream in managelidar.
+# Now that an explicit `workers=` is actually honored up to the full core
+# count, this sweep can show a real scaling curve; 150%/200% are left out
+# since managelidar warns (not clamps) above half of cores due to each
+# worker holding a full point cloud in memory (RAM headroom), and going
+# past 100% of cores is unlikely to help once CPU is saturated.
 total_cores <- parallel::detectCores(logical = TRUE)
-worker_counts <- unique(pmax(1, round(c(total_cores / 2, total_cores * 0.75, total_cores, total_cores * 1.5, total_cores * 2))))
+worker_counts <- unique(pmax(1, round(c(total_cores * 0.5, total_cores * 0.75, total_cores))))
 
-cat("Logical cores detected:", total_cores, "\n")
-cat("Worker counts to test:", paste(worker_counts, collapse = ", "), "\n\n")
+message("Logical cores detected: ", total_cores)
+message("Worker counts to test: ", paste(worker_counts, collapse = ", "))
 
 # ---------------------------------------------------------------------------
 # 3. Run the sweep.
@@ -72,5 +77,5 @@ results <- run_sweep(
   fileset      = files
 )
 
-cat("\n=== Summary (sorted by time) ===\n")
+message("\n=== Summary (sorted by time) ===")
 print(results[order(results$seconds), ], row.names = FALSE)

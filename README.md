@@ -1,4 +1,4 @@
-# lidar-benchmark
+# benchmarklidar
 
 Evidence base for ALS (airborne laser scanning) tooling and parallelization
 decisions before processing **terabytes** of production point-cloud data.
@@ -29,7 +29,7 @@ time and across machines.
 ## Repo layout
 
 ```
-lidar-benchmark/
+benchmarklidar/
 ├── _setup.R                # bootstrap: source this first in any benchmarks/*.R script
 ├── R/                       # reusable helpers (harness, tool config, staging, reporting)
 ├── data-prep/                # one-off scripts to acquire sample data from network shares
@@ -43,13 +43,20 @@ lidar-benchmark/
 
 ## Requirements / setup
 
-R packages: `lidR`, `lasR`, `fs`, `jsonlite`, `benchmarkme`, `future`,
-`future.apply`, `mirai`, `gt` (for the report); `managelidar` only for
-the worker-scaling benchmark
-(`remotes::install_github("nwfva-b4/managelidar")` or a local
-`devtools::install()`). External tools: PDAL (via conda) and LAStools —
-`configure_lidar_tools()` in `R/external-tools.R` puts both on `PATH`; edit
-the `conda_path`/`lastools_path` arguments for your machine.
+R packages: `lidR`, `RCSF` (lidR's CSF ground-classification algorithm),
+`lasR`, `fs`, `jsonlite`, `benchmarkme`, `future`,
+`future.apply`, `mirai`, `gt`, `knitr` (for the report); `managelidar`
+only for the worker-scaling benchmark. `source("_setup.R")` installs any
+of these that are missing automatically — `lidR` and friends from CRAN,
+`lasR` from its r-universe repo, `managelidar` via
+`remotes::install_github("nwfva-b4/managelidar")` — via
+`check_environment()` in `R/check-environment.R`. External tools: PDAL
+and LAStools, installed separately (PDAL via
+`conda install -c conda-forge pdal`; LAStools from
+[rapidlasso](https://rapidlasso.de/downloads/)) — `configure_lidar_tools()`
+in `R/external-tools.R` puts both on `PATH`; edit the
+`conda_path`/`lastools_path` arguments for your machine's install
+locations.
 
 **No `renv` lockfile, deliberately.** This project's entire purpose is
 comparing how tool *versions* perform, possibly differently, across
@@ -93,11 +100,11 @@ source("_setup.R")
 source("benchmarks/tools_comparison.R")  # or any other benchmarks/*.R script
 ```
 
-`source("_setup.R")` prints a one-time preflight check (`R/check-environment.R`)
-confirming every required R package and external tool (PDAL, LAStools) is
-actually available, plus what's being staged/configured — useful for
-spotting a missing dependency before a multi-hour run rather than partway
-through it. Every benchmark then reports progress as it goes: which
+`source("_setup.R")` runs a one-time preflight check (`R/check-environment.R`)
+that installs any missing required R package and confirms every external
+tool (PDAL, LAStools) is actually available, plus what's being
+staged/configured — useful for catching a missing dependency before a
+multi-hour run rather than partway through it. Every benchmark then reports progress as it goes: which
 sub-benchmark is running, `[cached]` vs. `[running]`/`[ran]`, and
 per-expression timing as each one finishes.
 
@@ -107,7 +114,7 @@ TRUE` (passed to `run_all_benchmarks()`, or directly to an individual
 `run_bench()`/`run_sweep()` call) or the cached file is deleted. Worth
 doing periodically for `benchmarks/drives_local-vs-network.R` in
 particular, since network/drive speed drifts over time independently of
-everything else (see the `alte-leitung` result in the machine table
+everything else (see PC166 vs. the other machines in the machine table
 below).
 
 ## How to view results
@@ -134,12 +141,13 @@ results$sweep   # parameter sweeps (e.g. worker scaling)
 | pc069 | Intel Core i5-10600 | 12 | 32GB | dev machine |
 | LB-3D2026 | (unrecorded) | 16 | 62GB | |
 | PC026 | AMD Threadripper PRO 5975WX | 64 (32c/64t) | 256GB | **production target machine** |
+| PC166 | (unrecorded) | 6 | (unrecorded) | slow network connection |
 
-`data/benchmarks/pc069/drives_local-vs-network_alte-leitung.RDS` is a real
-before/after data point: network read/write on pc069 was ~2x slower over
-an older network cable/line than the current baseline
-(`drives_local-vs-network.RDS`) — a concrete example of why network
-infrastructure matters as much as tooling for terabyte-scale throughput.
+PC166's `drives_local-vs-network.RDS` is a real example of why network
+infrastructure matters as much as tooling for terabyte-scale throughput:
+its network read/write is measurably slower than the other machines'
+(e.g. ~2.4x slower writes than local, vs. a much smaller gap elsewhere) —
+a genuinely slower connection, not a one-off historical comparison.
 
 ## Known limitations
 

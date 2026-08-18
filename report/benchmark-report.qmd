@@ -20,78 +20,380 @@ source("R/report-helpers.R")
 library(gt)
 
 results <- load_all_benchmarks()
+
+# What each benchmark tests and why, keyed by its .RDS basename (see
+# benchmarks/*.R for the code these describe). Shown above each table below.
+# Human-readable title for each benchmark, shown as its section heading
+# instead of the raw .RDS/script basename.
+benchmark_titles <- c(
+  tools_rw = "Read and Write",
+  tools_copc = "Convert to COPC",
+  tools_normals = "Compute Normals",
+  tools_ground = "Classify Ground",
+  lasr_stages = "lasR Pipeline Stages",
+  `lidr-lasr_ground-intensity` = "Ground Classification + Intensity Normalization",
+  parallel_strategies = "Parallelization Strategies",
+  `drives_local-vs-network` = "Local vs. Network Drive",
+  `workers_raw-to-processed` = "Worker-Count Scaling"
+)
+
+display_title <- function(b) {
+  if (b %in% names(benchmark_titles)) benchmark_titles[[b]] else b
+}
+
+benchmark_context <- c(
+  tools_rw = "Reads a single sample file and
+    writes it straight back out again, once with each tool (lidR, lasR,
+    PDAL, LAStools). lidR and lasR are limited to 4 CPU cores so neither
+    gets an unfair speed advantage over the other; PDAL and LAStools run
+    with their own default, unrestricted parallelism, since they're
+    invoked as external command-line tools with no core limit applied.
+    This is the baseline read/write cost that every other tool
+    comparison builds on.",
+  tools_copc = "Converts a single sample file into Cloud-Optimized Point
+    Cloud (COPC) format, once with lasR, PDAL, and LAStools (lidR can't
+    write COPC). lasR is limited to 4 CPU cores; PDAL and LAStools run
+    with their own default, unrestricted parallelism, since they're
+    invoked as external command-line tools with no core limit applied.
+    COPC is a format we're considering as our delivery format, so this
+    is about its conversion cost.",
+  tools_normals = "Computes surface normals (a per-point geometry
+    feature) for a single sample file, once with lasR and once with PDAL
+    (lidR and LAStools don't offer this). lasR is limited to 4 CPU
+    cores; PDAL runs with its own default, unrestricted parallelism,
+    since it's invoked as an external command-line tool with no core
+    limit applied. Relevant to any pipeline that needs geometric point
+    features downstream.",
+  tools_ground = "Classifies ground points in a single sample file, once
+    per tool's ground-classification method (lidR/lasR/PDAL's CSF
+    algorithm, lasR's own alternative method, LAStools' own algorithm).
+    lidR and lasR are limited to 4 CPU cores; PDAL and LAStools run with
+    their own default, unrestricted parallelism, since they're invoked
+    as external command-line tools with no core limit applied. Ground
+    classification has to happen before terrain models can be built, so
+    its cost matters at full scale. Note: these methods are not
+    equivalent — different algorithms and parameters will classify some
+    points differently, so this is a speed comparison, not a proof that
+    the outputs match.",
+  lasr_stages = "Times individual lasR stages — reading,
+    writing in three formats, sorting, building a terrain surface,
+    rasterizing, generating a ground or surface elevation model,
+    normalizing point heights, finding tree tops, and four different
+    ground/noise classification methods — on a single sample file
+    already loaded into memory, limited to 4 cores. Shows which steps
+    are the expensive ones in a typical processing pipeline.",
+  `lidr-lasr_ground-intensity` = "Runs a realistic two-step pipeline —
+    classify ground points, then rescale intensity values — on a single
+    sample file, once written as a pipeline in lidR and once as a lasR
+    pipeline with that same custom R logic plugged in. Same 4-core limit.
+    Tests whether lasR stays faster than lidR once real custom logic
+    (not just lasR's built-in steps) is part of the pipeline.",
+  parallel_strategies = "Reads and writes all 100 sample files from local
+    storage, using three different ways of spreading that work across
+    CPU cores. Each strategy uses half of the machine's available
+    cores. Shows which of the three approaches production tooling should
+    be built on. Caveat: the lasr_internal method hands lasR the entire
+    set of 100 files in one call, which makes lasR read extra data
+    around each file's edges to stay aware of its neighboring tiles —
+    work the other two methods skip entirely, since each hands lasR one
+    completely isolated file at a time. So lasr_internal being slower
+    isn't purely about which parallelization approach is better; part of
+    it is genuinely doing more work, and the comparison should be read
+    with that in mind.",
+  `drives_local-vs-network` = "Reads and writes a single sample file from
+    a local temp folder (C:/) vs. directly over the network drive (Y:/), to isolate
+    how much network speed (rather than processing itself) affects total
+    time.",
+  `workers_raw-to-processed` = "Runs our actual production processing
+    step (managelidar's raw-to-processed pipeline) on all 100 sample
+    files repeatedly, each time asking for a different number of
+    parallel workers (50%, 75%, and 100% of the machine's logical
+    cores). The most direct evidence toward the real question this
+    project exists to answer: how many workers to actually use in
+    production."
+)
+
+# Hand-written interpretation of each benchmark's results — not derived
+# from the data, so these need to be kept in sync manually if the
+# numbers change on a re-run. Shown as a callout below each benchmark's
+# table(s).
+benchmark_takeaways <- list(
+  `drives_local-vs-network` = c(
+    "Local storage is faster than network on every machine tested.",
+    "PC166's network connection is much slower than the others.",
+    "This only tested one file at a time — the network penalty could
+     matter more once several files are read/written in parallel and
+     share the same bandwidth.",
+    "LB-3D2026 is the fastest machine for single-file processing."
+  ),
+  lasr_stages = c(
+    "Stage costs vary widely across the pipeline.",
+    "Ground classification is by far the heaviest stage.",
+    "LB-3D2026 is the fastest machine for single-file processing."
+  ),
+  `lidr-lasr_ground-intensity` = c(
+    "The lasR pipeline (with a custom R callback) is much faster than
+     the equivalent lidR pipeline.",
+    "LB-3D2026 is the fastest machine."
+  ),
+  parallel_strategies = c(
+    "mirai is the fastest parallelization strategy when no buffer
+     reading is needed (see the lasr_internal caveat above).",
+    "PC026 is the fastest machine, using half of its many cores."
+  ),
+  tools_copc = c(
+    "lasR is faster than PDAL; LAStools is faster than lasR.",
+    "A new/updated lasR COPC writer is reportedly in development, which
+     may change this ranking.",
+    "If COPC conversion is just one step within a larger lasR pipeline,
+     lasR is probably still the fastest choice overall in practice,
+     since it avoids the extra read/write round-trip a separate
+     conversion step would need.",
+    "LB-3D2026 is the fastest machine for single-file processing."
+  ),
+  tools_ground = c(
+    "LAStools is the fastest tool overall. (Not sure whether it can make use of more CPU)",
+    "Among the R-based options, lasR's PTD algorithm is the fastest —
+     and gives good classification results too.",
+    "LB-3D2026 is the fastest machine."
+  ),
+  tools_normals = c(
+    "lasR is faster than PDAL."
+  ),
+  tools_rw = c(
+    "LAStools is the fastest tool. (Not sure whether it can make use of more CPU)"
+  ),
+  `workers_raw-to-processed` = c(
+    "On the machines that completed all 100 files at every worker count
+     (LB-3D2026, pc069, PC166), using 100% of cores is consistently
+     faster than 50-75% — 12-33% faster than at 50%.",
+    "PC026 only completed all 100 files at 50% of cores; at 75% and
+     100% most files failed (13/100 and 16/100 completed, see the
+     footnotes on the table). Its fast times there are an artifact of
+     that failure, not a real speed advantage — this points to a
+     stability or resource-contention issue at very high concurrency on
+     that machine that needs investigating before running production
+     jobs with that many workers."
+  )
+)
+
+# Prints a "Key takeaways" callout for a benchmark, if one is defined.
+print_takeaways <- function(b) {
+  if (!b %in% names(benchmark_takeaways)) return(invisible(NULL))
+  cat('\n::: {.callout-tip title="Key takeaways"}\n\n')
+  cat(paste0("- ", gsub("\\s+", " ", benchmark_takeaways[[b]]), collapse = "\n"))
+  cat("\n\n:::\n\n")
+}
+
+# Bolds+shades the fastest machine's cell in each row of a wide (id x
+# machine) gt table. Kept separate from pivot_wide() (R/report-helpers.R)
+# since it's gt-specific styling, not data reshaping.
+highlight_fastest <- function(tbl, wide, machines) {
+  row_min <- apply(wide[machines], 1, function(x) {
+    if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+  })
+  for (m in machines) {
+    fastest_rows <- which(!is.na(wide[[m]]) & wide[[m]] == row_min)
+    if (length(fastest_rows) > 0) {
+      tbl <- tbl |> tab_style(
+        style = list(cell_text(weight = "bold"), cell_fill(color = "#e8f4ea")),
+        locations = cells_body(columns = tidyselect::all_of(m), rows = fastest_rows)
+      )
+    }
+  }
+  tbl
+}
+
+# Bolds+shades the single fastest cell across the whole wide (id x
+# machine) table, on top of any per-row highlight_fastest() styling —
+# a distinct color so "fastest overall" reads differently from
+# "fastest machine in this row".
+highlight_overall_fastest <- function(tbl, wide, machines) {
+  mat <- as.matrix(wide[machines])
+  if (all(is.na(mat))) return(tbl)
+  min_val <- min(mat, na.rm = TRUE)
+  for (m in machines) {
+    rows <- which(!is.na(wide[[m]]) & wide[[m]] == min_val)
+    if (length(rows) > 0) {
+      tbl <- tbl |> tab_style(
+        style = list(
+          cell_text(weight = "bold"),
+          cell_fill(color = "#ffe9a8"),
+          cell_borders(sides = "all", color = "#c9a227", weight = px(2))
+        ),
+        locations = cells_body(columns = tidyselect::all_of(m), rows = rows)
+      )
+    }
+  }
+  tbl
+}
+
+# Named vector of file count per machine for a benchmark that ran against
+# a full corpus (filesetinfo present), NULL if this benchmark only ever
+# ran against a single representative file. Used to turn a total
+# wall-clock time into an average time per file for corpus-wide
+# benchmarks (parallel_strategies, workers_raw-to-processed) — the more
+# comparable, extrapolation-ready number for planning full-corpus runs.
+n_files_by_machine <- function(meta, benchmark) {
+  entries <- Filter(function(m) m$benchmark == benchmark && !is.null(m$filesetinfo), meta)
+  if (length(entries) == 0) return(NULL)
+  setNames(
+    vapply(entries, function(m) m$filesetinfo$n_files, numeric(1)),
+    vapply(entries, function(m) m$nodename, character(1))
+  )
+}
+
+# Divides each machine column in a wide (id x machine) table by that
+# machine's file count, turning total wall-clock time into average time
+# per file. Machines missing from `nfiles` become NA.
+per_file_wide <- function(wide, machines, nfiles) {
+  for (m in machines) {
+    wide[[m]] <- if (m %in% names(nfiles) && nfiles[[m]] > 0) wide[[m]] / nfiles[[m]] else NA_real_
+  }
+  wide
+}
+
+# Named vector of logical core count per machine for a benchmark, from
+# systeminfo — used to express a swept `workers` value as % of that
+# machine's cores instead of an absolute count, since the same
+# percentage means a different absolute worker count on every machine.
+cores_by_machine <- function(meta, benchmark) {
+  entries <- Filter(function(m) m$benchmark == benchmark && !is.null(m$systeminfo), meta)
+  if (length(entries) == 0) return(NULL)
+  setNames(
+    vapply(entries, function(m) m$systeminfo$cores, numeric(1)),
+    vapply(entries, function(m) m$nodename, character(1))
+  )
+}
 ```
 
-This report is generated entirely from `data/benchmarks/**/*.RDS` — it
-discovers every machine folder and benchmark result present, so it never
-goes stale the way a hardcoded script would. Re-render after adding new
-results with `quarto render report/benchmark-report.qmd`.
+Re-render after adding new results: `quarto render report/benchmark-report.qmd`.
 
-## System & package versions
+## Machines
 
-Every timing below is traceable to the machine and tool versions that
-produced it.
-
-```{r sysinfo-table}
-sysinfo_rows <- lapply(results$meta, function(b) {
+```{r machines-table}
+machine_rows <- lapply(results$meta, function(b) {
   si <- b$systeminfo
-  pv <- b$pkgversions
   data.frame(
-    benchmark = b$benchmark,
-    nodename  = b$nodename,
-    cpu       = if (!is.null(si)) si$cpu else NA,
-    cores     = if (!is.null(si)) si$cores else NA,
-    ram_gb    = if (!is.null(si)) round(as.numeric(si$ram) / 1024^3, 1) else NA,
-    r_version = if (!is.null(pv)) pv$r else NA,
-    lasR      = if (!is.null(pv)) pv$packages$lasR else NA,
-    lidR      = if (!is.null(pv)) pv$packages$lidR else NA
+    nodename = b$nodename,
+    cpu      = if (!is.null(si)) si$cpu else NA,
+    cores    = if (!is.null(si)) si$cores else NA,
+    ram_gb   = if (!is.null(si)) round(as.numeric(si$ram) / 1024^3, 1) else NA
   )
 })
+machines <- unique(do.call(rbind, machine_rows))
 
-gt(do.call(rbind, sysinfo_rows)) |>
+gt(machines) |>
   cols_label(
-    benchmark = "benchmark", nodename = "machine", cpu = "CPU",
-    cores = "cores", ram_gb = "RAM (GB)", r_version = "R",
-    lasR = "lasR", lidR = "lidR"
+    nodename = "machine", cpu = "CPU", cores = "cores", ram_gb = "RAM (GB)"
   ) |>
   fmt_number(columns = ram_gb, decimals = 1) |>
   opt_row_striping() |>
   tab_options(table.font.size = "13px", data_row.padding = px(4))
 ```
 
-## Named comparisons (tool/stage benchmarks)
+## Test data
 
-One minimal table per benchmark type, across every machine that has
-results for it. Relative time is scaled against the fastest result in
-each table (1.00 = fastest).
+All benchmarks run against a fixed random sample of 100 real ALS tiles
+(~4.5GB total, seed 42) from Lower Saxony's 2016 statewide ALS campaign.
+Most tool/stage comparisons use one representative file from that
+sample; the corpus-wide benchmarks (parallelization strategies,
+worker-count scaling) use the full 100 files. See the README for how
+the sample was chosen and how to regenerate it.
+
+## Package versions
+
+```{r versions-table}
+#| results: asis
+version_rows <- lapply(results$meta, function(b) {
+  pv <- b$pkgversions
+  data.frame(
+    benchmark = display_title(b$benchmark),
+    nodename  = b$nodename,
+    r_version = if (!is.null(pv)) pv$r else NA,
+    lasR      = if (!is.null(pv)) pv$packages$lasR else NA,
+    lidR      = if (!is.null(pv)) pv$packages$lidR else NA
+  )
+})
+
+tbl <- gt(do.call(rbind, version_rows)) |>
+  cols_label(
+    benchmark = "benchmark", nodename = "machine",
+    r_version = "R", lasR = "lasR", lidR = "lidR"
+  ) |>
+  opt_row_striping() |>
+  tab_options(table.font.size = "13px", data_row.padding = px(4))
+
+cat("<details>\n<summary>R/lasR/lidR versions per benchmark run (this repo doesn't pin a lockfile, so versions can drift over time — see README)</summary>\n\n")
+print(tbl)
+cat("\n\n</details>\n\n")
+```
+
+## Named comparisons (tool/stage benchmarks)
 
 ```{r named-results}
 #| results: asis
 if (!is.null(results$named)) {
   for (b in unique(results$named$benchmark)) {
-    cat("###", b, "\n\n")
-    d <- results$named[results$named$benchmark == b, c("nodename", "expression", "elapsed")]
-    d <- add_relative_time(d, "elapsed")
+    cat("###", display_title(b), "\n\n")
+    if (b %in% names(benchmark_context)) cat(benchmark_context[[b]], "\n\n")
 
-    tbl <- gt(d) |>
-      cols_label(
-        nodename = "machine", expression = "method",
-        elapsed = "time (s)", relative = "relative"
-      ) |>
-      fmt_number(columns = elapsed, decimals = 2) |>
-      fmt_number(columns = relative, decimals = 2, pattern = "{x}x") |>
-      sub_missing(columns = c(elapsed, relative), missing_text = "not available") |>
-      data_color(
-        columns = relative,
-        method = "numeric",
-        palette = c("#e8f4ea", "#f9e6c8"),
-        domain = c(1, max(d$relative, na.rm = TRUE))
-      ) |>
+    d <- results$named[results$named$benchmark == b, c("nodename", "expression", "elapsed")]
+    d <- mask_missing_external_tools(d, results$meta, b)
+    d$elapsed <- na_if_unavailable(d$elapsed)
+    machines <- unique(d$nodename)
+    # One row per method, one column per machine — reading down a column
+    # compares methods on one machine, reading across a row compares
+    # machines on one method, without the two mixing into one ranking.
+    wide <- pivot_wide(d, "expression", "nodename", "elapsed")
+
+    # Benchmarks that ran against the full corpus (not just one
+    # representative file) report average time per file instead of total
+    # wall-clock time — the more comparable, extrapolation-ready number.
+    # Single-file benchmarks just report the (already per-file) time.
+    nfiles <- n_files_by_machine(results$meta, b)
+    display <- if (!is.null(nfiles)) per_file_wide(wide, machines, nfiles) else wide
+
+    if (!is.null(nfiles)) cat("Average time per file (s):\n\n") else cat("Time (s):\n\n")
+
+    # lasr_stages gets a "Total" row summing every stage's time — useful
+    # as a rough total-pipeline-cost signal, though note some stages
+    # overlap (dtm/dsm/normalize internally reuse triangulate/rasterize,
+    # and the four classify_with_* rows are alternative methods, not
+    # steps of the same pipeline), so it's not a literal single run time.
+    is_lasr_stages <- b == "lasr_stages"
+    tbl <- if (is_lasr_stages) {
+      gt(display, rowname_col = "expression") |> tab_stubhead(label = "method")
+    } else {
+      gt(display) |> cols_label(expression = "method")
+    }
+    tbl <- tbl |>
+      fmt_number(columns = tidyselect::all_of(machines), decimals = 1) |>
+      sub_missing(columns = tidyselect::all_of(machines), missing_text = "not available") |>
       opt_row_striping() |>
       tab_options(table.font.size = "13px", data_row.padding = px(4))
 
+    if (is_lasr_stages) {
+      tbl <- tbl |> grand_summary_rows(
+        columns = tidyselect::all_of(machines),
+        fns = list(label = "Total", id = "total", fn = "sum"),
+        fmt = ~ fmt_number(., decimals = 1),
+        missing_text = "not available"
+      )
+    }
+
+    # Skip fastest-machine highlighting on the average-time-per-file
+    # table (parallel_strategies) to keep it simpler — only single-file
+    # tables get the per-row fastest-machine marker.
+    if (is.null(nfiles) && length(machines) > 1) {
+      tbl <- tbl |>
+        tab_source_note("bold = fastest machine for that method") |>
+        highlight_fastest(display, machines)
+    }
+
     print(tbl)
     cat("\n\n")
+    print_takeaways(b)
   }
 } else {
   cat("No named-comparison results found under data/benchmarks/.\n")
@@ -100,38 +402,108 @@ if (!is.null(results$named)) {
 
 ## Parameter sweeps (e.g. worker-count scaling)
 
-Relative time is scaled against the fastest parameter value in each
-table (1.00 = fastest).
-
 ```{r sweep-results}
 #| results: asis
 if (!is.null(results$sweep)) {
   for (b in unique(results$sweep$benchmark)) {
-    cat("###", b, "\n\n")
-    d <- results$sweep[results$sweep$benchmark == b, ]
-    param <- setdiff(names(d), c("seconds", "nodename", "benchmark"))[1]
-    d <- d[, c("nodename", param, "seconds")]
-    d <- d[order(d[[param]]), ]
-    d <- add_relative_time(d, "seconds", reorder = FALSE)
+    cat("###", display_title(b), "\n\n")
+    if (b %in% names(benchmark_context)) cat(benchmark_context[[b]], "\n\n")
 
-    tbl <- gt(d) |>
-      cols_label(
-        nodename = "machine", seconds = "time (s)", relative = "relative"
-      ) |>
-      fmt_number(columns = seconds, decimals = 2) |>
-      fmt_number(columns = relative, decimals = 2, pattern = "{x}x") |>
-      sub_missing(columns = c(seconds, relative), missing_text = "not available") |>
-      data_color(
-        columns = relative,
-        method = "numeric",
-        palette = c("#e8f4ea", "#f9e6c8"),
-        domain = c(1, max(d$relative, na.rm = TRUE))
-      ) |>
+    d <- results$sweep[results$sweep$benchmark == b, ]
+    param <- setdiff(names(d), c("seconds", "nodename", "benchmark", "n_ok", "n_total"))[1]
+    has_success_info <- all(c("n_ok", "n_total") %in% names(d))
+    d <- d[, c("nodename", param, "seconds", if (has_success_info) c("n_ok", "n_total"))]
+    d$seconds <- na_if_unavailable(d$seconds)
+
+    # Show `workers` as % of each machine's own core count rather than an
+    # absolute number — machines have different core counts, so the same
+    # absolute worker count means something different on each, while the
+    # same percentage lines up as the same row across machines.
+    is_pct <- FALSE
+    if (param == "workers") {
+      cores <- cores_by_machine(results$meta, b)
+      if (!is.null(cores) && all(d$nodename %in% names(cores))) {
+        d[[param]] <- round(d[[param]] / cores[d$nodename] * 100)
+        names(d)[names(d) == param] <- "% of cores"
+        param <- "% of cores"
+        is_pct <- TRUE
+      }
+    }
+
+    machines <- unique(d$nodename)
+    # One row per parameter value, one column per machine — see the
+    # named-comparisons loop above for why this beats one long table.
+    wide <- pivot_wide(d, param, "nodename", "seconds")
+    wide <- wide[order(wide[[param]]), ]
+
+    # Report average time per file when the run covered a known corpus
+    # size (always true today, kept conditional for robustness) — see
+    # the named-comparisons loop above for why.
+    nfiles <- n_files_by_machine(results$meta, b)
+    display <- if (!is.null(nfiles)) per_file_wide(wide, machines, nfiles) else wide
+
+    if (!is.null(nfiles)) cat("Average time per file (s):\n\n") else cat("Time (s):\n\n")
+
+    tbl <- gt(display) |>
+      fmt_number(columns = tidyselect::all_of(machines), decimals = 1) |>
+      sub_missing(columns = tidyselect::all_of(machines), missing_text = "not available") |>
       opt_row_striping() |>
       tab_options(table.font.size = "13px", data_row.padding = px(4))
 
+    if (is_pct) {
+      tbl <- tbl |> fmt_number(columns = tidyselect::all_of(param), decimals = 0, pattern = "{x}%")
+    }
+
+    # Show each machine's core count in its column header — useful here
+    # since "% of cores" only means something once you know how many
+    # cores that percentage is relative to on each machine.
+    col_cores <- cores_by_machine(results$meta, b)
+    if (!is.null(col_cores)) {
+      machine_labels <- setNames(
+        lapply(machines, function(m) {
+          if (m %in% names(col_cores)) paste0(m, " (", col_cores[[m]], ")") else m
+        }),
+        machines
+      )
+      tbl <- tbl |> cols_label(.list = machine_labels)
+    }
+
+    # A run that only completed a fraction of its files can look
+    # deceptively fast — exclude those cells from "fastest" ranking (a
+    # separate copy, so the real number still prints) and footnote them
+    # on the table itself so the reader isn't misled by the raw time.
+    ranking_display <- display
+    if (has_success_info) {
+      incomplete <- d[!is.na(d$n_ok) & !is.na(d$n_total) & d$n_ok < d$n_total, ]
+      for (i in seq_len(nrow(incomplete))) {
+        row_idx <- which(display[[param]] == incomplete[[param]][i])
+        m <- incomplete$nodename[i]
+        if (length(row_idx) == 1 && m %in% names(ranking_display)) {
+          ranking_display[row_idx, m] <- NA_real_
+          tbl <- tbl |> tab_footnote(
+            footnote = sprintf("only %d/%d files completed successfully — time not comparable",
+                                incomplete$n_ok[i], incomplete$n_total[i]),
+            locations = cells_body(columns = tidyselect::all_of(m), rows = row_idx)
+          )
+        }
+      }
+    }
+
+    # Skip per-row (green) highlighting on the average-time-per-file
+    # table to keep it simpler — the single fastest-overall (gold)
+    # marker is enough there.
+    notes <- character(0)
+    if (is.null(nfiles) && length(machines) > 1) {
+      tbl <- tbl |> highlight_fastest(ranking_display, machines)
+      notes <- c(notes, "green = fastest machine for that parameter value")
+    }
+    tbl <- tbl |> highlight_overall_fastest(ranking_display, machines)
+    notes <- c(notes, "gold = fastest overall")
+    tbl <- tbl |> tab_source_note(paste(notes, collapse = "; "))
+
     print(tbl)
     cat("\n\n")
+    print_takeaways(b)
   }
 } else {
   cat("No parameter-sweep results found under data/benchmarks/ yet (e.g. run benchmarks/workers_raw-to-processed.R).\n")

@@ -3,15 +3,15 @@
 # source; in_laz (from _setup.R's stage_sample_data()) is the same corpus
 # copied to a local tempdir. Cached like every other benchmark — pass
 # overwrite = TRUE (to run_all_benchmarks() or directly here) to force a
-# fresh measurement, e.g. after a known network infrastructure change (see
-# data/benchmarks/pc069/drives_local-vs-network_alte-leitung.RDS for a real
-# before/after example: ~2x slower reads over an old network cable/line
-# ("alte Leitung")).
+# fresh measurement, e.g. after a known network infrastructure change —
+# network/drive speed drifts over time independently of everything else
+# (see PC166's numbers vs. the other machines in the machine table in
+# README.md for a real example of a genuinely slower connection).
 source("_setup.R")
 
 # Network path is hardcoded to this repo's own share location — only
 # reproducible from a machine with the same Y: mapping.
-network_dir <- "Y:/Jens/lidar-benchmark/data/pointclouds/"
+network_dir <- "Y:/Jens/benchmarklidar/data/pointclouds/"
 
 in_local   <- pick_representative_file(in_laz)
 in_network <- fs::path(network_dir, fs::path_file(in_local))

@@ -6,6 +6,15 @@ source("_setup.R")
 
 kernels <- max(1, round(parallel::detectCores(logical = TRUE) / 2))
 
+# Caveat: unlike future_apply/mirai_map below, this hands lasR the whole
+# file collection in one exec() call. Per ?lasR::set_exec_options, lasR
+# then decides on its own whether/how much buffer to read around each
+# file's edges to stay aware of neighboring tiles — work the other two
+# strategies never do, since each calls exec() on one fully isolated file
+# at a time. So lasr_internal running slower isn't purely a measure of
+# the parallelization strategy; part of it is genuinely doing more work.
+# (Also make sure the corpus is .lax-indexed before trusting this number —
+# see "Known limitations" in the README for why that matters a lot here.)
 lasr_internal <- function() {
   out_dir <- fs::file_temp("parallel_lasr_")
   dir.create(out_dir)
@@ -47,5 +56,5 @@ run_bench(
   lasr_internal = lasr_internal,
   future_apply  = future_apply,
   mirai_map     = mirai_map,
-  fileinfo = get_filesetinfo(in_laz)
+  filesetinfo = get_filesetinfo(in_laz)
 )

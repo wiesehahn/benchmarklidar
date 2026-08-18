@@ -21,9 +21,9 @@ configure_lidar_tools()
 # nothing here needs its own once-per-session guard except the (louder,
 # multi-line) environment check. Must run AFTER configure_lidar_tools()
 # so pdal/LAStools are actually on PATH to find.
-if (!isTRUE(getOption("lidarbench.setup_done"))) {
+if (!isTRUE(getOption("benchmarklidar.setup_done"))) {
   check_environment()
-  options(lidarbench.setup_done = TRUE)
+  options(benchmarklidar.setup_done = TRUE)
 }
 
 in_laz <- stage_sample_data()

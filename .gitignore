@@ -1,11 +1,13 @@
 # machine-local sample data (regenerable via data-prep/fetch_sample_data.R)
 data/pointclouds/
-data/*.laz
 
 # RStudio / R session state
 .Rproj.user/
 .Rhistory
 .RData
+
+# Quarto render cache
+.quarto/
 
 # rendered report output (regenerate on demand)
 report/*.html

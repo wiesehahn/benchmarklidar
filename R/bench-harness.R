@@ -66,11 +66,11 @@ pick_representative_file <- function(files, method = "median_size") {
 # data/benchmarks/{nodename}/{rds_file}, and record system/file/package
 # info alongside the timings. Re-running is a no-op unless overwrite=TRUE
 # or the cached file is deleted. Default overwrite reads the
-# "lidarbench.overwrite" option, so run_all_benchmarks() (R/run-all.R) can
+# "benchmarklidar.overwrite" option, so run_all_benchmarks() (R/run-all.R) can
 # force a fresh run of everything without every script needing its own
 # overwrite= argument.
-run_bench <- function(rds_file, ..., fileinfo = NULL,
-                       overwrite = getOption("lidarbench.overwrite", FALSE)) {
+run_bench <- function(rds_file, ..., fileinfo = NULL, filesetinfo = NULL,
+                       overwrite = getOption("benchmarklidar.overwrite", FALSE)) {
   systeminfo <- get_systeminfo()
 
   rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))
@@ -104,6 +104,7 @@ run_bench <- function(rds_file, ..., fileinfo = NULL,
   attr(res, "systeminfo") <- systeminfo
   attr(res, "pkgversions") <- get_pkgversions()
   if (!is.null(fileinfo)) attr(res, "fileinfo") <- fileinfo
+  if (!is.null(filesetinfo)) attr(res, "filesetinfo") <- filesetinfo
 
   saveRDS(res, rds_path)
   message("  [ran]    ", rds_file)
@@ -115,10 +116,10 @@ run_bench <- function(rds_file, ..., fileinfo = NULL,
 # than "compare these named alternatives". `fun(param_value, ...)` is
 # timed with Sys.time() and may return a named list of extra columns
 # (e.g. n_ok) to attach to that row. Default overwrite reads the same
-# "lidarbench.overwrite" option as run_bench() — see there.
+# "benchmarklidar.overwrite" option as run_bench() — see there.
 run_sweep <- function(rds_file, param_name, param_values, fun, ...,
                        fileset = NULL,
-                       overwrite = getOption("lidarbench.overwrite", FALSE)) {
+                       overwrite = getOption("benchmarklidar.overwrite", FALSE)) {
   systeminfo <- get_systeminfo()
 
   rds_folder <- fs::dir_create(fs::path("data/benchmarks", systeminfo$nodename))

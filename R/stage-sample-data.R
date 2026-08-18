@@ -13,7 +13,7 @@ stage_sample_data <- function(source_dir = "data/pointclouds", dest_dir = tempdi
       message(sprintf("Staging sample data: copying %d file(s) (%s GB) to %s ...",
                        length(to_copy), gb, dest_dir))
       fs::file_copy(to_copy, fs::path(dest_dir, fs::path_file(to_copy)))
-      message(sprintf("Staging sample data: %d file(s) staged at %s", length(src), dest_dir))
+      message(sprintf("Staging sample data: corpus now has %d file(s) staged at %s", length(src), dest_dir))
     }
     fs::path(dest_dir, fs::path_file(src))
   }

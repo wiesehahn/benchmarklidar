@@ -1,5 +1,12 @@
 # `raw_to_processed()` parallelization: findings
 
+> **2026-08-17 fix, superseded below:** `managelidar::map_las()` used to
+> silently clamp any requested `workers` to half of logical cores, no
+> matter what was asked for, so the original single-machine sweep result
+> that used to be here was an artifact of that clamp, not genuine scaling
+> behavior. It's been replaced below with a fresh sweep across all 4
+> machines, run after the fix.
+
 Investigation of how to best parallelize `managelidar::raw_to_processed()`
 (converts raw ALS LAZ/LAS tiles into quality-controlled, standardized point
 clouds: CRS fix, reclassification, noise/ground classification, intensity
@@ -70,48 +77,43 @@ additional file-worker. A tentative `ncores = concurrent_points(2)` default
 was implemented, benchmarked, and then reverted. **Do not re-attempt an
 internal-threading default without new contradicting evidence.**
 
-## First full-queue sweep result: "half of cores" confirmed conservative (on the 12-core dev machine)
+## Full-queue sweep, all 4 machines (post-fix)
 
-`benchmarks/workers_raw-to-processed.R` run for real on PC069 (12 logical
-cores, 32GB RAM) against the full 100-tile sample corpus (~4.5GB, a
-reproducible random sample from Lower Saxony's 2016 statewide ALS
-campaign — see `data-prep/fetch_sample_data.R`), sweeping `workers` from
-half the logical core count up to 2x:
+`benchmarks/workers_raw-to-processed.R` run against the full 100-tile
+sample corpus, sweeping `workers` at 50%/75%/100% of each machine's own
+logical core count. Full numbers and per-machine caveats are in the
+rendered report (`report/benchmark-report.qmd`'s Worker-Count Scaling
+section); summary:
 
-| workers | seconds | vs. workers=6 |
-|---|---|---|
-| 6 (today's literal default: half of cores) | 2972.5 | baseline |
-| 9 (0.75x cores) | 2701.7 | -9.1% |
-| 12 (1x cores) | 2654.4 | -10.7% |
-| **18 (1.5x cores)** | **2600.7** | **-12.5% — fastest** |
-| 24 (2x cores) | 2653.4 | -10.7% |
+| machine | cores | 50% | 75% | 100% |
+|---|---|---|---|---|
+| LB-3D2026 | 16 | 15.2 s/file | 15.3 s/file | **12.7 s/file** |
+| pc069 | 12 | 27.9 s/file | 23.5 s/file | **21.6 s/file** |
+| PC166 | 6 | 51.4 s/file | 40.8 s/file | **34.3 s/file** |
+| PC026 | 64 | 7.8 s/file (96/100 files) | 2.9 s/file (**only 13/100 files**) | 3.6 s/file (**only 16/100 files**) |
 
-All 5 configs processed 100/100 files successfully — no failures at any
-worker count. **This settles the question for this machine:** `workers=6`
-(the current default heuristic) is measurably conservative — `workers=18`
-(1.5x logical cores) is ~12.5% faster, with no sign of memory exhaustion
-or I/O contention at any tested worker count. Returns diminish and
-slightly reverse past 18 workers (24 is marginally slower than 18),
-suggesting the plateau on *this* machine sits somewhere around 1.5-2x
-logical cores, not at 1x or 0.5x.
+**On the three machines that completed all 100 files at every worker
+count**, using 100% of cores is consistently faster than 50-75% — a
+genuine, now-trustworthy improvement (12-33% faster at 100% vs. 50%).
+`workers=NULL`'s default heuristic (half of cores) is measurably
+conservative on all three.
 
-**Still open:** this was tested only on the 12-core/32GB dev machine. The
-production target — AMD Ryzen Threadripper PRO 5975WX, 32 cores / 64
-threads (SMT), 256GB RAM — has a much larger core count and RAM headroom,
-so it's not yet known whether the same ~1.5x-cores sweet spot holds there,
-or whether I/O (especially reading from shared/network storage) or memory
-pressure becomes the bottleneck earlier at that much higher concurrency.
-Given the dev-machine result, raising the package's default heuristic
-above "half of cores" looks justified in principle — but that's a
-separate decision from this benchmarking pass, since it affects *all*
-users of the package. Confirming the pattern holds on the Threadripper
-(or finding where it breaks down there) should come before changing the
-shipped default; a targeted `workers=` override is the safe interim
-choice for production runs on that machine.
+**PC026 is the open question.** It only completed all 100 files at 50%
+of cores; at 75% and 100% most files failed outright (13/100 and 16/100
+completed). Its fast per-file times there are an artifact of that
+failure — most of the corpus never finished — not a real speed
+advantage, and should not be read as "PC026 is fastest." This looks like
+a stability or resource-contention issue specific to very high
+concurrency (48-64 concurrent R worker processes) on that machine, not
+a RAM problem (256GB is ample headroom for this workload).
 
-**Test data:** 100 real ALS tiles (~4.5GB total, ~20-90MB each) from
-Lower Saxony's 2016 statewide campaign, fixed random sample (seed 42) via
-`data-prep/fetch_sample_data.R`.
+**Suggested next step:** investigate why PC026 fails at 75%+ workers —
+check the per-file error messages in `managelidar`'s own processing log
+(`log_dir`, written per run by `raw_to_processed()`) for a consistent
+failure mode (e.g. GDAL/PROJ contention, process-spawn limits, or
+antivirus interference under many concurrent R processes on Windows)
+before recommending any worker count above 50% of cores for that
+machine in production.
 
 ## Gotchas hit while benchmarking
 
@@ -133,22 +135,3 @@ Lower Saxony's 2016 statewide campaign, fixed random sample (seed 42) via
    generous timeouts and be checked back on — a single sequential-baseline
    run over ~300MB of real data took ~5 minutes; full grid searches over
    more configs can run well past 10 minutes.
-
-## Suggested next step
-
-1. Confirm R + `managelidar` (with all deps: `lasR`, `gdalraster`, etc.) is
-   installed on PC026 (the Threadripper).
-2. Run `benchmarks/workers_raw-to-processed.R` there against the same
-   100-tile sample corpus (`data-prep/fetch_sample_data.R`), watching
-   memory usage alongside wall-clock time. Consider widening
-   `worker_counts` beyond the default half/0.75x/1x/1.5x/2x-cores range —
-   at 64 logical cores, 2x is 128 workers, which may need a larger file
-   set than 100 to keep the queue non-empty throughout (see the dev-machine
-   sizing rationale in `data-prep/fetch_sample_data.R`).
-3. Look for the plateau/regression point in the timing curve. If it sits
-   meaningfully above 0.5x cores (as it did on the dev machine, at ~1.5x),
-   raising the package's default heuristic looks justified — but that's a
-   separate decision from this benchmarking pass, since it affects *all*
-   users of the package, not just this high-core-count production use
-   case; a targeted `workers=` override for this specific production run
-   is safer than changing the shipped default without broader validation.
