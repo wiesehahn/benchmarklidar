@@ -13,6 +13,44 @@ get_systeminfo <- function() {
   )
 }
 
+# Point-in-time resource pressure snapshot — free RAM, CPU load, and how
+# many *other* interactive sessions are logged into the machine. Exists to
+# test (not just guess at) whether high-worker-count failures on shared
+# machines like PC026 correlate with memory pressure or other users'
+# concurrent sessions contending for cores, rather than being an
+# unexplained tool bug. Windows-only (wmic was dropped from newer Windows
+# builds, hence PowerShell/query.exe here); returns NAs elsewhere or on any
+# failure, since this is diagnostic and must never break the benchmark
+# itself.
+get_resource_snapshot <- function() {
+  snapshot <- list(free_ram_gb = NA_real_, cpu_load_pct = NA_real_, other_sessions = NA_integer_)
+  if (unname(Sys.info()["sysname"]) != "Windows") return(snapshot)
+
+  snapshot$free_ram_gb <- tryCatch({
+    kb <- as.numeric(system2("powershell", c("-NoProfile", "-Command",
+      "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"), stdout = TRUE))
+    round(kb / 1024^2, 2)
+  }, error = function(e) NA_real_, warning = function(w) NA_real_)
+
+  snapshot$cpu_load_pct <- tryCatch({
+    as.numeric(system2("powershell", c("-NoProfile", "-Command",
+      "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average"),
+      stdout = TRUE))
+  }, error = function(e) NA_real_, warning = function(w) NA_real_)
+
+  snapshot$other_sessions <- tryCatch({
+    # query.exe exits with status 1 even on success (observed on this
+    # machine), which system2() turns into a warning unrelated to whether
+    # the output is usable — suppress just that, not real failures below.
+    # Output is one header row + one row per session (including this one);
+    # no other-user sessions is a legitimate 0, not a failure.
+    out <- suppressWarnings(system2("query", "user", stdout = TRUE, stderr = TRUE))
+    max(0L, length(out) - 2L)
+  }, error = function(e) NA_integer_)
+
+  snapshot
+}
+
 get_fileinfo <- function(file) {
   list(
     filename = fs::path_file(file),

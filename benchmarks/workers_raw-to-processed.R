@@ -7,7 +7,10 @@
 # open: why the production machine (PC026) fails to complete most files
 # above 50% of cores — per-file logs are now kept on disk (see
 # sweep_workers() below) instead of being deleted before anyone can read
-# them, specifically to chase this down).
+# them, and each worker count records free RAM/CPU load/other logged-in
+# sessions beforehand (get_resource_snapshot(), R/bench-harness.R), to
+# test the low-RAM and other-users-contending-for-cores hypotheses rather
+# than just guessing at them).
 #
 # Does NOT call set_fixed_thread_baseline() — worker count is the variable
 # under test, and raw_to_processed() already hardcodes ncores=1 internally
@@ -71,6 +74,15 @@ sweep_workers <- function(workers, files) {
   fs::dir_create(log_dir)
   message(sprintf("    per-file logs for workers=%d kept at: %s", workers, log_dir))
 
+  # Snapshot resource pressure right before the run, to test the RAM/
+  # other-users-contending-for-cores hypotheses for the PC026 failures
+  # (see docs/worker-scaling-findings.md) instead of just guessing at them.
+  before <- get_resource_snapshot()
+  message(sprintf(
+    "    before run: %.1fGB free RAM, %.0f%% CPU load, %s other session(s)",
+    before$free_ram_gb, before$cpu_load_pct, before$other_sessions
+  ))
+
   # No suppressWarnings()/suppressMessages() here either, for the same
   # reason: a warning from a failing file is diagnostic signal, not noise.
   # region = NULL: auto-infer from each file's bounding box, rather than
@@ -78,7 +90,13 @@ sweep_workers <- function(workers, files) {
   # test files (the sample corpus here is "ni" tiles, not "he").
   res <- raw_to_processed(files, out_dir = out_dir, log_dir = log_dir, region = NULL, verbose = FALSE, workers = workers)
 
-  list(n_ok = sum(!vapply(res, is.null, logical(1))), n_total = length(files))
+  after <- get_resource_snapshot()
+
+  list(
+    n_ok = sum(!vapply(res, is.null, logical(1))), n_total = length(files),
+    free_ram_gb_before = before$free_ram_gb, free_ram_gb_after = after$free_ram_gb,
+    cpu_load_pct_before = before$cpu_load_pct, other_sessions_before = before$other_sessions
+  )
 }
 
 results <- run_sweep(
