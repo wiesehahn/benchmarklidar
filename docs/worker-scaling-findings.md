@@ -223,6 +223,30 @@ Two ways to actually fix this, evaluated 2026-08-20:
    build production reliability behavior; that belongs in
    `raw_to_processed()`/`map_las()` itself.
 
+**2026-08-20, pagefile confirmed small — idle-state check.** User ran
+the read-only queries above directly on PC026:
+
+| metric | value |
+|---|---|
+| RAM (total / free) | 255.8 GB / 236.9 GB |
+| Pagefile (`AllocatedBaseSize`) | 29.8 GB, `AutomaticManagedPagefile: True` |
+| Commit limit (`TotalVirtualMemorySize`) | 285.6 GB (= RAM + pagefile, checks out) |
+| Free commit (`FreeVirtualMemory`) | 255.4 GB (idle) |
+| Free disk on C: | ~396 GB |
+
+Pagefile is **11.7% of RAM** — confirms the "Windows sizes the pagefile
+conservatively small on huge-RAM machines" theory with real numbers,
+not just inference. Disk space isn't the constraint (396GB free); even
+with `AutomaticManagedPagefile: True`, Windows evidently isn't growing
+it generously for 256GB of RAM on its own. Pagefile `CurrentUsage`/
+`PeakUsage` both read 0 — this snapshot was taken at idle (machine
+appears to have been idle or rebooted since the last failing run), so
+it doesn't yet show commit headroom collapsing *during* a failing run.
+That's exactly what `free_commit_gb_before`/`_after` in the sweep
+results are for — next actionable step is one more sweep run to get
+that live reading and close out the "settled" status with direct
+during-run evidence, not just idle-state inference.
+
 ## Gotchas hit while benchmarking
 
 1. **mirai workers load the *installed* package, not any `devtools::load_all()`
