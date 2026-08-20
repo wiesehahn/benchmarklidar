@@ -98,8 +98,9 @@ genuine, now-trustworthy improvement (12-33% faster at 100% vs. 50%).
 `workers=NULL`'s default heuristic (half of cores) is measurably
 conservative on all three.
 
-**PC026 is the open question.** It only completed all 100 files at 50%
-of cores; at 75% and 100% most files failed outright (13/100 and 16/100
+**PC026 is the open question.** ~~It only completed all 100 files at 50%
+of cores~~ — **correction below: 50% isn't reliable either**, just less
+bad. At 75% and 100% most files failed outright (13/100 and 16/100
 completed). Its fast per-file times there are an artifact of that
 failure — most of the corpus never finished — not a real speed
 advantage, and should not be read as "PC026 is fastest." This looks like
@@ -195,12 +196,32 @@ assumption it won't be needed.
 (`Win32_OperatingSystem.FreeVirtualMemory`, WMI's name for remaining
 commit headroom) alongside `free_ram_gb`, so the next PC026 run confirms
 this numerically — expect `free_commit_gb_before` to be much lower than
-`free_ram_gb_before`, and to shrink further at 48/64 workers. **Suggested
-fix:** grow PC026's pagefile (System Properties → Advanced → Performance
-Settings → Advanced → Virtual Memory), or, if that's not desirable,
-recommend capping production worker count at 50% of cores for that
-machine — the RAM/other-users hypotheses above are no longer worth
-pursuing.
+`free_ram_gb_before`, and to shrink further at 48/64 workers.
+
+**2026-08-20, correction: 50% of cores (32 workers) isn't reliable
+either.** The user shared the w32 log too: 13/100 failed, same
+signatures (`std::bad_alloc`, `"Memory reallocation failed: Insufficient
+memory"`). Across the three independent PC026 runs so far, 50% has
+completed 87, 90-91, and 96 out of 100 — never a clean 100. Also notable:
+the *specific* files that fail aren't fixed (e.g. one file failed in the
+50%-worker run here but succeeded in an earlier 75%-worker run) — it's
+which files happen to land concurrently on workers at any given moment,
+spiking peak commit demand when several large tiles get processed at
+once by chance, not a per-file defect. So there's no worker count on
+PC026 in this sweep design that's been observed to guarantee 100/100;
+higher worker counts just make the failure much more frequent.
+
+Two ways to actually fix this, evaluated 2026-08-20:
+1. **Grow PC026's pagefile** — the direct fix, but the user doesn't have
+   admin rights on PC026, so this needs escalating to whoever does,
+   armed with the diagnostic evidence above (the literal "Auslagerungsdatei
+   ist zu klein" error plus `Win32_PageFileUsage`/`Win32_OperatingSystem`
+   readings, all queryable without admin rights).
+2. **Retry failed files at low/no concurrency** — decided to be
+   `managelidar`'s responsibility, not this repo's. This repo stays
+   diagnostic-only (measuring and explaining the failure), not a place to
+   build production reliability behavior; that belongs in
+   `raw_to_processed()`/`map_las()` itself.
 
 ## Gotchas hit while benchmarking
 

@@ -4,15 +4,19 @@
 # answer. See docs/worker-scaling-findings.md for the investigation so far
 # (settled: internal lasR threading is NOT worth it vs. more concurrent
 # file workers; half of cores is confirmed conservative on most machines;
-# settled: PC026's high-worker-count failures are a Windows commit-limit
-# (RAM + pagefile) exhaustion, not physical RAM or other users — a
-# 2026-08-20 log showed "Die Auslagerungsdatei ist zu klein" (pagefile
-# too small) errors while free_ram_gb stayed flat at ~237/256GB;
+# settled: PC026's worker-count failures are a Windows commit-limit (RAM
+# + pagefile) exhaustion, not physical RAM or other users — logs showed
+# "Die Auslagerungsdatei ist zu klein" (pagefile too small) and
+# std::bad_alloc errors while free_ram_gb stayed flat at ~237/256GB, at
+# 50% of cores too (not just 75%/100% — see docs for the correction).
 # per-file logs are kept on disk (see sweep_workers() below) and each
 # worker count records free RAM/commit headroom/CPU load/other sessions
-# beforehand (get_resource_snapshot(), R/bench-harness.R); open: confirm
-# via free_commit_gb_before on the next run, then decide whether to grow
-# PC026's pagefile or just cap production worker count at 50% of cores).
+# beforehand (get_resource_snapshot(), R/bench-harness.R). No worker
+# count in this sweep has been observed to reliably complete 100/100 on
+# PC026 — either the machine's pagefile needs growing (needs admin
+# rights the current user doesn't have) or reliable completion needs
+# retry-on-failure logic, which belongs in managelidar itself, not this
+# benchmarking repo).
 #
 # Does NOT call set_fixed_thread_baseline() — worker count is the variable
 # under test, and raw_to_processed() already hardcodes ncores=1 internally
