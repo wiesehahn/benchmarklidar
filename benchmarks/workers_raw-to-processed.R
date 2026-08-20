@@ -5,7 +5,9 @@
 # (settled: internal lasR threading is NOT worth it vs. more concurrent
 # file workers; half of cores is confirmed conservative on most machines;
 # open: why the production machine (PC026) fails to complete most files
-# above 50% of cores).
+# above 50% of cores — per-file logs are now kept on disk (see
+# sweep_workers() below) instead of being deleted before anyone can read
+# them, specifically to chase this down).
 #
 # Does NOT call set_fixed_thread_baseline() — worker count is the variable
 # under test, and raw_to_processed() already hardcodes ncores=1 internally
@@ -54,16 +56,27 @@ message("Worker counts to test: ", paste(worker_counts, collapse = ", "))
 # 3. Run the sweep.
 # ---------------------------------------------------------------------------
 sweep_workers <- function(workers, files) {
+  # out_dir holds the processed point clouds themselves (large, disposable)
+  # and is cleaned up as before. log_dir is kept on disk, separately, so a
+  # failure's actual cause survives past this call — the previous version
+  # pointed log_dir at out_dir and then deleted it in on.exit(), destroying
+  # the only diagnostic evidence for the very failures this sweep exists to
+  # catch (e.g. PC026 dropping most files at 75-100% of cores, see
+  # docs/worker-scaling-findings.md).
   out_dir <- fs::file_temp("bench_workers_")
   dir.create(out_dir)
   on.exit(unlink(out_dir, recursive = TRUE), add = TRUE)
 
-  res <- suppressMessages(suppressWarnings(
-    # region = NULL: auto-infer from each file's bounding box, rather than
-    # hardcoding a region code that only matched the original author's own
-    # test files (the sample corpus here is "ni" tiles, not "he").
-    raw_to_processed(files, out_dir = out_dir, log_dir = out_dir, region = NULL, verbose = FALSE, workers = workers)
-  ))
+  log_dir <- fs::path(tempdir(), sprintf("bench_workers_logs_w%d", workers))
+  fs::dir_create(log_dir)
+  message(sprintf("    per-file logs for workers=%d kept at: %s", workers, log_dir))
+
+  # No suppressWarnings()/suppressMessages() here either, for the same
+  # reason: a warning from a failing file is diagnostic signal, not noise.
+  # region = NULL: auto-infer from each file's bounding box, rather than
+  # hardcoding a region code that only matched the original author's own
+  # test files (the sample corpus here is "ni" tiles, not "he").
+  res <- raw_to_processed(files, out_dir = out_dir, log_dir = log_dir, region = NULL, verbose = FALSE, workers = workers)
 
   list(n_ok = sum(!vapply(res, is.null, logical(1))), n_total = length(files))
 }

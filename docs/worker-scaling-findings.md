@@ -107,13 +107,35 @@ a stability or resource-contention issue specific to very high
 concurrency (48-64 concurrent R worker processes) on that machine, not
 a RAM problem (256GB is ample headroom for this workload).
 
-**Suggested next step:** investigate why PC026 fails at 75%+ workers —
-check the per-file error messages in `managelidar`'s own processing log
-(`log_dir`, written per run by `raw_to_processed()`) for a consistent
-failure mode (e.g. GDAL/PROJ contention, process-spawn limits, or
-antivirus interference under many concurrent R processes on Windows)
-before recommending any worker count above 50% of cores for that
-machine in production.
+**2026-08-20 reproducibility check:** re-ran the same sweep on PC026 a
+second time to rule out a one-off fluke:
+
+| workers (% cores) | run 1 | run 2 |
+|---|---|---|
+| 32 (50%) | 90/100, 740s | 91/100, 745s |
+| 48 (75%) | 20/100, 309s | 12/100, 292s |
+| 64 (100%) | 28/100, 879s | 25/100, 367s |
+
+Confirmed reproducible, not noise — 75%/100% reliably tank completion on
+both runs. Also notable: even 50% no longer reliably completes all 100
+files (90-91/100 now vs. 96/100 in the original run above), so "50% is
+safe on PC026" should be treated as provisional, not settled. Wall-clock
+at 100% varied a lot between runs (879s vs. 367s) for a similar
+completion count, consistent with contention/retries rather than a clean
+fast failure.
+
+**Root cause still open.** `sweep_workers()` in
+`benchmarks/workers_raw-to-processed.R` used to point `log_dir` at the
+same directory it deleted via `on.exit(unlink(...))` right after each
+call, and wrapped the whole call in `suppressWarnings()` — so every run
+destroyed its own diagnostic evidence before anyone could read it. Fixed
+2026-08-20: `log_dir` now lives in a separate, non-deleted temp path
+(printed to the console per worker count) and warnings are no longer
+suppressed. Next PC026 run should actually surface a failure mode —
+check the per-file logs for a consistent pattern (e.g. GDAL/PROJ
+contention, process-spawn limits, or antivirus interference under many
+concurrent R processes on Windows) before recommending any worker count
+above 50% of cores for that machine in production.
 
 ## Gotchas hit while benchmarking
 
