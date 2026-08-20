@@ -124,18 +124,43 @@ at 100% varied a lot between runs (879s vs. 367s) for a similar
 completion count, consistent with contention/retries rather than a clean
 fast failure.
 
-**Root cause still open.** `sweep_workers()` in
-`benchmarks/workers_raw-to-processed.R` used to point `log_dir` at the
-same directory it deleted via `on.exit(unlink(...))` right after each
-call, and wrapped the whole call in `suppressWarnings()` — so every run
-destroyed its own diagnostic evidence before anyone could read it. Fixed
-2026-08-20: `log_dir` now lives in a separate, non-deleted temp path
-(printed to the console per worker count) and warnings are no longer
-suppressed. Next PC026 run should actually surface a failure mode —
-check the per-file logs for a consistent pattern (e.g. GDAL/PROJ
-contention, process-spawn limits, or antivirus interference under many
-concurrent R processes on Windows) before recommending any worker count
-above 50% of cores for that machine in production.
+**2026-08-20 RAM/other-users check — both ruled out (before-run state, at
+least).** Added `get_resource_snapshot()` (free RAM, CPU load, other
+logged-in sessions) to `sweep_workers()`, recorded before each worker
+count. Third PC026 run:
+
+| workers (% cores) | seconds | n_ok/100 | free RAM before | free RAM after | CPU load before | other sessions |
+|---|---|---|---|---|---|---|
+| 32 (50%) | 746 | 87 | 236.4 GB | 237.4 GB | 3% | 1 |
+| 48 (75%) | 320 | 26 | 237.4 GB | 237.4 GB | 1% | 1 |
+| 64 (100%) | 337 | 26 | 237.3 GB | 237.4 GB | 3% | 1 |
+
+Free RAM stays flat at ~237/256 GB across all three — the corpus is only
+~4.5GB/100 files, nowhere near enough to pressure that much headroom even
+at 64 concurrent workers. CPU load and other-session count were also low
+and *identical* whether the run mostly succeeded (32) or mostly failed
+(48, 64) — a second session was present throughout, including the
+successful run, so it doesn't track with the failures either. Neither
+"the machine doesn't have enough RAM" nor "someone else was using it"
+hypothesis is supported by the before-run state. (Caveat: this only
+snapshots state *before* each run starts, not during — a spike caused by
+mirai spawning many R processes at once wouldn't show up here.)
+
+**Root cause still open, but the diagnostic trail is finally intact.**
+`sweep_workers()` in `benchmarks/workers_raw-to-processed.R` had two bugs
+that destroyed its own evidence: (1) `log_dir` pointed at the same
+directory deleted via `on.exit(unlink(...))` right after each call, and
+(2) the whole call was wrapped in `suppressWarnings()`. Fixed
+2026-08-17→2026-08-20 in two passes — first moved `log_dir` out of
+`out_dir`, then discovered even that wasn't enough: pointing it at
+`tempdir()` still loses everything the moment the R session closes,
+since R deletes its entire per-session temp directory on exit. `log_dir`
+now lives at `logs/workers_raw-to-processed/{nodename}/w{workers}/`
+(project-relative, gitignored, immune to both bugs). Next PC026 run:
+check those per-file logs for a consistent failure pattern (e.g. GDAL/
+PROJ contention, process-spawn limits, or antivirus interference under
+many concurrent R processes on Windows) before recommending any worker
+count above 50% of cores for that machine in production.
 
 ## Gotchas hit while benchmarking
 

@@ -70,7 +70,12 @@ sweep_workers <- function(workers, files) {
   dir.create(out_dir)
   on.exit(unlink(out_dir, recursive = TRUE), add = TRUE)
 
-  log_dir <- fs::path(tempdir(), sprintf("bench_workers_logs_w%d", workers))
+  # A project-relative, gitignored path rather than tempdir(): R deletes
+  # its whole per-session temp directory when the session ends, which
+  # would silently destroy these logs again the moment the R console
+  # closes, same failure mode as the on.exit(unlink()) bug this replaced.
+  nodename <- unname(Sys.info()["nodename"])
+  log_dir <- fs::path("logs/workers_raw-to-processed", nodename, sprintf("w%d", workers))
   fs::dir_create(log_dir)
   message(sprintf("    per-file logs for workers=%d kept at: %s", workers, log_dir))
 

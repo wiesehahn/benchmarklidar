@@ -14,8 +14,12 @@ report/*.html
 report/*_files/
 report/*_cache/
 
+# per-file benchmark diagnostic logs (regenerate on demand)
+logs/
+
 # OS cruft
 Thumbs.db
 
 # Claude Code session state
 .claude/
+.positai
