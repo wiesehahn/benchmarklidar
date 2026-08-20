@@ -35,7 +35,7 @@ benchmarklidar/
 ├── data-prep/                # one-off scripts to acquire sample data from network shares
 ├── benchmarks/               # the benchmark scripts themselves
 ├── report/                   # Quarto report rendering all saved results
-├── docs/                     # deeper investigation write-ups
+├── docs/                     # deeper investigation write-ups + published report (GitHub Pages)
 └── data/
     ├── pointclouds/          # sample ALS corpus (gitignored, ~4.5GB, regenerable)
     └── benchmarks/{nodename}/*.RDS   # saved results — tracked in git
@@ -124,6 +124,20 @@ Render the report:
 ```sh
 quarto render report/benchmark-report.qmd
 ```
+
+**Publish to GitHub Pages** (served from `docs/` on `main`, no CI): after
+re-rendering, copy the output over the published copy and commit it —
+
+```sh
+cp report/benchmark-report.html docs/index.html
+git add docs/index.html
+git commit -m "Update published report"
+git push
+```
+
+Live at <https://wiesehahn.github.io/benchmarklidar/> once GitHub Pages
+is configured (Settings → Pages → Deploy from a branch → `main` /
+`docs`).
 
 Or explore interactively from the console:
 
