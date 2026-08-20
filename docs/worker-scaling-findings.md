@@ -146,21 +146,61 @@ hypothesis is supported by the before-run state. (Caveat: this only
 snapshots state *before* each run starts, not during — a spike caused by
 mirai spawning many R processes at once wouldn't show up here.)
 
-**Root cause still open, but the diagnostic trail is finally intact.**
-`sweep_workers()` in `benchmarks/workers_raw-to-processed.R` had two bugs
-that destroyed its own evidence: (1) `log_dir` pointed at the same
-directory deleted via `on.exit(unlink(...))` right after each call, and
-(2) the whole call was wrapped in `suppressWarnings()`. Fixed
+The diagnostic trail took two fixes to actually survive long enough to
+read. `sweep_workers()` in `benchmarks/workers_raw-to-processed.R` had
+two bugs that destroyed its own evidence: (1) `log_dir` pointed at the
+same directory deleted via `on.exit(unlink(...))` right after each call,
+and (2) the whole call was wrapped in `suppressWarnings()`. Fixed
 2026-08-17→2026-08-20 in two passes — first moved `log_dir` out of
 `out_dir`, then discovered even that wasn't enough: pointing it at
 `tempdir()` still loses everything the moment the R session closes,
 since R deletes its entire per-session temp directory on exit. `log_dir`
 now lives at `logs/workers_raw-to-processed/{nodename}/w{workers}/`
-(project-relative, gitignored, immune to both bugs). Next PC026 run:
-check those per-file logs for a consistent failure pattern (e.g. GDAL/
-PROJ contention, process-spawn limits, or antivirus interference under
-many concurrent R processes on Windows) before recommending any worker
-count above 50% of cores for that machine in production.
+(project-relative, gitignored, immune to both bugs).
+
+**2026-08-20, settled: Windows commit-limit (RAM + pagefile) exhaustion,
+not physical RAM.** A user caught the w48 log before the R session
+closed. Two failure signatures, 74/100 files, dominate:
+
+```
+"in 'reader_las' while processing the point cloud: Memory reallocation failed: Insufficient memory"
+
+"kann shared object '.../rlas/libs/x64/rlas.dll' nicht laden:
+  LoadLibrary failure: Die Auslagerungsdatei ist zu klein, um diesen Vorgang durchzuführen."
+```
+
+The second one translates to **"the paging file is too small for this
+operation"** — Windows naming the pagefile as the failure point
+directly. A third, seemingly unrelated failure mode also showed up only
+at high worker counts — `raw_to_processed()`'s per-file boundary lookup
+(`region = NULL` triggers a `download.file()` call) failing with
+`"Internet-Routinen können nicht geladen werden"` (WinINet failed to
+initialize) — which fits the same explanation: initializing a networking
+DLL is another way to hit a commit-limit wall, not evidence of an actual
+network outage (it never happened at 32 workers).
+
+This resolves why `free_ram_gb` looked fine (~237/256GB free) while
+files were failing: physical RAM headroom and the *commit limit* are
+different ceilings. The commit limit is `RAM + pagefile size`, and
+Windows enforces it against the sum of all processes' reserved/committed
+virtual memory — even memory that's reserved but never actually touched
+counts against it. Spawning 48-64 separate R processes at once, each
+loading its own R runtime + lasR/rlas DLLs + point-cloud buffers, can
+rack up enough aggregate commit charge to hit a small pagefile's ceiling
+long before physical RAM runs low — plausible on a machine with 256GB of
+RAM, where Windows often sizes the pagefile conservatively small on the
+assumption it won't be needed.
+
+`get_resource_snapshot()` now also records `free_commit_gb`
+(`Win32_OperatingSystem.FreeVirtualMemory`, WMI's name for remaining
+commit headroom) alongside `free_ram_gb`, so the next PC026 run confirms
+this numerically — expect `free_commit_gb_before` to be much lower than
+`free_ram_gb_before`, and to shrink further at 48/64 workers. **Suggested
+fix:** grow PC026's pagefile (System Properties → Advanced → Performance
+Settings → Advanced → Virtual Memory), or, if that's not desirable,
+recommend capping production worker count at 50% of cores for that
+machine — the RAM/other-users hypotheses above are no longer worth
+pursuing.
 
 ## Gotchas hit while benchmarking
 

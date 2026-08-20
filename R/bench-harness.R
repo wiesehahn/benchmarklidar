@@ -13,22 +13,38 @@ get_systeminfo <- function() {
   )
 }
 
-# Point-in-time resource pressure snapshot — free RAM, CPU load, and how
-# many *other* interactive sessions are logged into the machine. Exists to
-# test (not just guess at) whether high-worker-count failures on shared
-# machines like PC026 correlate with memory pressure or other users'
-# concurrent sessions contending for cores, rather than being an
-# unexplained tool bug. Windows-only (wmic was dropped from newer Windows
-# builds, hence PowerShell/query.exe here); returns NAs elsewhere or on any
-# failure, since this is diagnostic and must never break the benchmark
-# itself.
+# Point-in-time resource pressure snapshot — free RAM, free *commit*
+# headroom (RAM + pagefile — a separate, smaller ceiling Windows enforces
+# regardless of how much physical RAM is free), CPU load, and how many
+# *other* interactive sessions are logged into the machine. Exists to test
+# (not just guess at) whether high-worker-count failures on shared
+# machines like PC026 correlate with memory/commit pressure or other
+# users' concurrent sessions contending for cores, rather than being an
+# unexplained tool bug. free_commit_gb was added 2026-08-20 after a PC026
+# log showed "Die Auslagerungsdatei ist zu klein" (pagefile too small) and
+# "Memory reallocation failed" errors at 48-64 workers despite
+# free_ram_gb staying flat around 237/256GB — physical RAM was never the
+# constraint, so this tracks the commit limit those errors actually hit.
+# Windows-only (wmic was dropped from newer Windows builds, hence
+# PowerShell/query.exe here); returns NAs elsewhere or on any failure,
+# since this is diagnostic and must never break the benchmark itself.
 get_resource_snapshot <- function() {
-  snapshot <- list(free_ram_gb = NA_real_, cpu_load_pct = NA_real_, other_sessions = NA_integer_)
+  snapshot <- list(free_ram_gb = NA_real_, free_commit_gb = NA_real_,
+                    cpu_load_pct = NA_real_, other_sessions = NA_integer_)
   if (unname(Sys.info()["sysname"]) != "Windows") return(snapshot)
 
   snapshot$free_ram_gb <- tryCatch({
     kb <- as.numeric(system2("powershell", c("-NoProfile", "-Command",
       "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"), stdout = TRUE))
+    round(kb / 1024^2, 2)
+  }, error = function(e) NA_real_, warning = function(w) NA_real_)
+
+  # FreeVirtualMemory is WMI's name for remaining commit-limit headroom
+  # (RAM + pagefile), not physical RAM — the actual ceiling "Die
+  # Auslagerungsdatei ist zu klein" errors hit.
+  snapshot$free_commit_gb <- tryCatch({
+    kb <- as.numeric(system2("powershell", c("-NoProfile", "-Command",
+      "(Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory"), stdout = TRUE))
     round(kb / 1024^2, 2)
   }, error = function(e) NA_real_, warning = function(w) NA_real_)
 
